@@ -58,8 +58,8 @@ use std::fmt;
 use ndarray::Array2;
 use thiserror::Error;
 
-use super::backend::{RuntimeAnalyticalModel, RuntimeOdeModel, RuntimeSdeModel};
 use super::jit::{compile_execution_model_to_jit, JitCompileError};
+use super::model::{RuntimeAnalyticalModel, RuntimeOdeModel, RuntimeSdeModel};
 use super::model_info::RuntimeModelInfo;
 use crate::{
     simulator::likelihood::{Prediction, SubjectPredictions},

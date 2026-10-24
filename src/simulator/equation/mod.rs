@@ -50,10 +50,12 @@
 use std::fmt::Debug;
 pub mod analytical;
 pub mod metadata;
+pub mod model;
 pub mod ode;
 pub mod sde;
 pub use analytical::*;
 pub use metadata::*;
+pub use model::{AttachMetadataError, Model};
 pub use ode::*;
 pub use pharmsol_dsl::{AnalyticalKernel, ModelKind};
 pub use sde::*;

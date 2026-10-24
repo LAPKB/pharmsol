@@ -1,3 +1,9 @@
+//! Models with closed-form solutions.
+//!
+//! [`Analytical`] pairs an [`AnalyticalModel`] with a prediction cache. Between
+//! events the state is advanced in closed form, split at every infusion start
+//! and stop so each step sees constant rates.
+
 pub mod one_compartment_cl_models;
 pub mod one_compartment_models;
 pub mod three_compartment_cl_models;
@@ -5,54 +11,354 @@ pub mod three_compartment_models;
 pub mod two_compartment_cl_models;
 pub mod two_compartment_models;
 
-use diffsol::{NalgebraContext, Vector, VectorHost};
+mod native;
+
+pub use native::NativeAnalytical;
 pub use one_compartment_cl_models::*;
 pub use one_compartment_models::*;
-use pharmsol_dsl::ModelKind;
-use thiserror::Error;
 pub use three_compartment_cl_models::*;
 pub use three_compartment_models::*;
 pub use two_compartment_cl_models::*;
 pub use two_compartment_models::*;
 
-use super::parameters_hash;
+use diffsol::{NalgebraContext, Vector, VectorHost};
+use pharmsol_dsl::AnalyticalKernel;
 
-use super::{
-    simulate_events, Equation, EquationPriv, ModelMetadata, ModelMetadataError,
-    ValidatedModelMetadata,
-};
+use super::model::{fill_active_rates, infusions, prepare_occasion, with_subject_context, Model};
+use super::{parameters_hash, Cache, Equation, ValidatedModelMetadata};
 use crate::data::error_model::AssayErrorModels;
+use crate::prelude::simulator::SubjectPredictions;
 use crate::simulator::cache::{PredictionCache, DEFAULT_CACHE_SIZE};
-use crate::PharmsolError;
-use crate::{data::Covariates, simulator::*, Observation, Subject};
+use crate::simulator::{AnalyticalEq, T, V};
+use crate::{data::Covariates, Event, Infusion, Occasion, PharmsolError, Subject};
 
-#[derive(Clone, Debug, PartialEq, Eq, Error)]
-pub enum AnalyticalMetadataError {
-    #[error(transparent)]
-    Validation(#[from] ModelMetadataError),
-    #[error("analytical model declares {declared} state metadata entries but model has {expected} states")]
-    StateCountMismatch { expected: usize, declared: usize },
-    #[error("analytical model declares {declared} route metadata entries but model has {expected} inputs")]
-    RouteCountMismatch { expected: usize, declared: usize },
-    #[error("analytical model declares {declared} output metadata entries but model has {expected} outputs")]
-    OutputCountMismatch { expected: usize, declared: usize },
+/// Model functions for an [`Analytical`] equation.
+pub trait AnalyticalModel: Model {
+    /// Advance `x` by `dt`, ending at `time`, with constant infusion `rates`.
+    ///
+    /// `p` is reset to the support point at each event and carries over
+    /// between the steps of one event interval, so secondary equations may
+    /// update it in place.
+    #[allow(clippy::too_many_arguments)]
+    fn step(
+        &self,
+        ws: &mut Self::Workspace,
+        time: f64,
+        dt: f64,
+        x: &mut V,
+        p: &mut V,
+        cov: &Covariates,
+        rates: &V,
+    ) -> Result<(), PharmsolError>;
 }
 
-/// Model equation using analytical solutions.
+/// An [`AnalyticalModel`] with a prediction cache.
 ///
-/// This implementation uses closed-form analytical solutions for the model
-/// equations rather than numerical integration.
+/// Caching is on by default; see [`Cache`]. Clones share the cache.
 #[derive(Clone, Debug)]
-pub struct Analytical {
-    eq: AnalyticalEq,
-    seq_eq: SecEq,
-    lag: Lag,
-    fa: Fa,
-    init: Init,
-    out: Out,
-    neqs: Neqs,
-    metadata: Option<ValidatedModelMetadata>,
+pub struct Analytical<M = NativeAnalytical> {
+    model: M,
     cache: Option<PredictionCache>,
+}
+
+impl<M: AnalyticalModel> Analytical<M> {
+    /// Wrap a model with the default cache.
+    pub fn from_model(model: M) -> Self {
+        Self {
+            model,
+            cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
+        }
+    }
+
+    /// The model functions.
+    pub fn model(&self) -> &M {
+        &self.model
+    }
+
+    #[cfg(test)]
+    pub(crate) fn prediction_cache(&self) -> Option<&PredictionCache> {
+        self.cache.as_ref()
+    }
+
+    pub fn parameter_index(&self, name: &str) -> Option<usize> {
+        self.model.metadata()?.parameter_index(name)
+    }
+
+    pub fn covariate_index(&self, name: &str) -> Option<usize> {
+        self.model.metadata()?.covariate_index(name)
+    }
+
+    pub fn state_index(&self, name: &str) -> Option<usize> {
+        self.model.metadata()?.state_index(name)
+    }
+
+    /// Predictions for a subject, from the cache when possible.
+    fn predictions(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+    ) -> Result<SubjectPredictions, PharmsolError> {
+        let Some(cache) = &self.cache else {
+            return self.simulate(subject, parameters);
+        };
+        let key = (subject.hash(), parameters_hash(parameters));
+        if let Some(cached) = cache.get(&key) {
+            return Ok(cached);
+        }
+        let predictions = self.simulate(subject, parameters)?;
+        cache.insert(key, predictions.clone());
+        Ok(predictions)
+    }
+
+    fn simulate(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+    ) -> Result<SubjectPredictions, PharmsolError> {
+        let in_context = |error| with_subject_context(&self.model, error, subject.id(), parameters);
+        self.model
+            .check_parameters(parameters)
+            .map_err(in_context)?;
+
+        let p = V::from_vec(parameters.to_vec(), NalgebraContext::new());
+        let mut scratch = Scratch::new(&self.model, parameters.len());
+        let mut output = SubjectPredictions::default();
+        for occasion in subject.occasions() {
+            self.simulate_occasion(occasion, &p, &mut scratch, &mut output)
+                .map_err(in_context)?;
+        }
+        Ok(output)
+    }
+
+    fn simulate_occasion(
+        &self,
+        occasion: &Occasion,
+        p: &V,
+        scratch: &mut Scratch,
+        output: &mut SubjectPredictions,
+    ) -> Result<(), PharmsolError> {
+        let covariates = occasion.covariates();
+        let mut ws = self.model.workspace();
+        let events = prepare_occasion(&self.model, &mut ws, occasion, p)?;
+        let infusions = infusions(&events);
+        let mut x = V::zeros(self.model.nstates(), NalgebraContext::new());
+        self.model.init(&mut ws, 0.0, p, covariates, &mut x)?;
+
+        for (index, event) in events.iter().enumerate() {
+            match event {
+                Event::Bolus(bolus) => {
+                    let input = bolus
+                        .input_index()
+                        .expect("prepared boluses carry a dense input index");
+                    self.model.bolus(
+                        &mut ws,
+                        event.time(),
+                        &mut x,
+                        p,
+                        covariates,
+                        input,
+                        bolus.amount(),
+                    )?;
+                }
+                // Infusions enter through the rates of each step.
+                Event::Infusion(_) => {}
+                Event::Observation(observation) => {
+                    fill_active_rates(&infusions, observation.time(), &mut scratch.rates);
+                    scratch.y.fill(0.0);
+                    self.model.outputs(
+                        &mut ws,
+                        observation.time(),
+                        &x,
+                        p,
+                        covariates,
+                        &scratch.rates,
+                        &mut scratch.y,
+                    )?;
+                    let outeq = observation
+                        .outeq_slot()
+                        .expect("prepared observations carry an output slot");
+                    output.add_prediction(
+                        observation.to_prediction(scratch.y[outeq], x.as_slice().to_vec()),
+                    );
+                }
+            }
+
+            if let Some(next_event) = events.get(index + 1) {
+                self.advance(
+                    &mut ws,
+                    &mut x,
+                    p,
+                    covariates,
+                    &infusions,
+                    event.time(),
+                    next_event.time(),
+                    scratch,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Advance `x` from `start` to `end`, splitting at infusion boundaries.
+    #[allow(clippy::too_many_arguments)]
+    fn advance(
+        &self,
+        ws: &mut M::Workspace,
+        x: &mut V,
+        p: &V,
+        covariates: &Covariates,
+        infusions: &[Infusion],
+        start: f64,
+        end: f64,
+        scratch: &mut Scratch,
+    ) -> Result<(), PharmsolError> {
+        if start == end {
+            return Ok(());
+        }
+
+        let mut breakpoints = vec![start, end];
+        for infusion in infusions {
+            let begin = infusion.time();
+            let finish = begin + infusion.duration();
+            if begin > start && begin < end {
+                breakpoints.push(begin);
+            }
+            if finish > start && finish < end {
+                breakpoints.push(finish);
+            }
+        }
+        breakpoints.sort_by(|a, b| a.total_cmp(b));
+        breakpoints.dedup_by(|a, b| (*a - *b).abs() < 1e-12);
+
+        scratch.p.copy_from(p);
+        for segment in breakpoints.windows(2) {
+            let (from, to) = (segment[0], segment[1]);
+            fill_segment_rates(infusions, from, to, &mut scratch.rates);
+            self.model.step(
+                ws,
+                to,
+                to - from,
+                x,
+                &mut scratch.p,
+                covariates,
+                &scratch.rates,
+            )?;
+        }
+        Ok(())
+    }
+}
+
+/// Fill `rates` with the infusions that run for the whole segment `[from, to]`.
+fn fill_segment_rates(infusions: &[Infusion], from: f64, to: f64, rates: &mut V) {
+    let rates = rates.as_mut_slice();
+    rates.fill(0.0);
+    for infusion in infusions {
+        let input = infusion
+            .input_index()
+            .expect("prepared infusions carry a dense input index");
+        if from >= infusion.time() && to <= infusion.time() + infusion.duration() {
+            rates[input] += infusion.amount() / infusion.duration();
+        }
+    }
+}
+
+/// Buffers reused across a subject's occasions.
+struct Scratch {
+    /// Structural parameters of the current step.
+    p: V,
+    /// Outputs at an observation.
+    y: V,
+    /// Infusion rates of the current step or observation.
+    rates: V,
+}
+
+impl Scratch {
+    fn new(model: &impl Model, nparams: usize) -> Self {
+        let ctx = NalgebraContext::new();
+        Self {
+            p: V::zeros(nparams, ctx),
+            y: V::zeros(model.noutputs(), ctx),
+            rates: V::zeros(model.ninputs(), ctx),
+        }
+    }
+}
+
+impl<M: AnalyticalModel> Cache for Analytical<M> {
+    fn with_cache_capacity(mut self, size: usize) -> Self {
+        self.cache = Some(PredictionCache::new(size));
+        self
+    }
+
+    fn enable_cache(mut self) -> Self {
+        self.cache = Some(PredictionCache::new(DEFAULT_CACHE_SIZE));
+        self
+    }
+
+    fn clear_cache(&self) {
+        if let Some(cache) = &self.cache {
+            cache.invalidate_all();
+        }
+    }
+
+    fn disable_cache(mut self) -> Self {
+        self.cache = None;
+        self
+    }
+}
+
+impl<M: AnalyticalModel> Equation for Analytical<M> {
+    type P = SubjectPredictions;
+
+    fn metadata(&self) -> Option<&ValidatedModelMetadata> {
+        self.model.metadata()
+    }
+
+    fn nstates(&self) -> usize {
+        self.model.nstates()
+    }
+
+    fn nouteqs(&self) -> usize {
+        self.model.noutputs()
+    }
+
+    fn estimate_predictions(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+    ) -> Result<SubjectPredictions, PharmsolError> {
+        self.predictions(subject, parameters)
+    }
+
+    fn estimate_log_likelihood(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+        error_models: &AssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
+        self.validate_error_models(error_models)?;
+        self.predictions(subject, parameters)?
+            .log_likelihood(error_models)
+    }
+}
+
+/// The closed-form solution behind a built-in analytical kernel.
+pub fn kernel_function(kernel: AnalyticalKernel) -> AnalyticalEq {
+    match kernel {
+        AnalyticalKernel::OneCompartment => one_compartment,
+        AnalyticalKernel::OneCompartmentCl => one_compartment_cl,
+        AnalyticalKernel::OneCompartmentClWithAbsorption => one_compartment_cl_with_absorption,
+        AnalyticalKernel::OneCompartmentWithAbsorption => one_compartment_with_absorption,
+        AnalyticalKernel::TwoCompartments => two_compartments,
+        AnalyticalKernel::TwoCompartmentsCl => two_compartments_cl,
+        AnalyticalKernel::TwoCompartmentsClWithAbsorption => two_compartments_cl_with_absorption,
+        AnalyticalKernel::TwoCompartmentsWithAbsorption => two_compartments_with_absorption,
+        AnalyticalKernel::ThreeCompartments => three_compartments,
+        AnalyticalKernel::ThreeCompartmentsCl => three_compartments_cl,
+        AnalyticalKernel::ThreeCompartmentsClWithAbsorption => {
+            three_compartments_cl_with_absorption
+        }
+        AnalyticalKernel::ThreeCompartmentsWithAbsorption => three_compartments_with_absorption,
+    }
 }
 
 #[inline(always)]
@@ -86,919 +392,5 @@ pub(crate) fn wrap_pmetrics_analytical(
     pad_public_vector(&compact_output)
 }
 
-impl Analytical {
-    /// Create a new Analytical equation model with default Neqs (all sizes = 5).
-    ///
-    /// Use builder methods to configure dimensions:
-    /// ```ignore
-    /// Analytical::new(eq, seq_eq, lag, fa, init, out)
-    ///     .with_nstates(2)
-    ///     .with_ndrugs(1)
-    ///     .with_nout(1)
-    /// ```
-    pub fn new(eq: AnalyticalEq, seq_eq: SecEq, lag: Lag, fa: Fa, init: Init, out: Out) -> Self {
-        Self {
-            eq,
-            seq_eq,
-            lag,
-            fa,
-            init,
-            out,
-            neqs: Neqs::default(),
-            metadata: None,
-            cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
-        }
-    }
-
-    /// Set the number of state variables.
-    pub fn with_nstates(mut self, nstates: usize) -> Self {
-        self.neqs.nstates = nstates;
-        self.invalidate_metadata();
-        self
-    }
-
-    /// Set the number of drug inputs (size of bolus[] and rateiv[]).
-    pub fn with_ndrugs(mut self, ndrugs: usize) -> Self {
-        self.neqs.ndrugs = ndrugs;
-        self.invalidate_metadata();
-        self
-    }
-
-    /// Set the number of output equations.
-    pub fn with_nout(mut self, nout: usize) -> Self {
-        self.neqs.nout = nout;
-        self.invalidate_metadata();
-        self
-    }
-
-    /// Attach validated handwritten-model metadata to this analytical model.
-    pub fn with_metadata(
-        mut self,
-        metadata: ModelMetadata,
-    ) -> Result<Self, AnalyticalMetadataError> {
-        let metadata = metadata.validate_for(ModelKind::Analytical)?;
-        validate_metadata_dimensions(&metadata, &self.neqs)?;
-        self.metadata = Some(metadata);
-        Ok(self)
-    }
-
-    /// Access the validated metadata attached to this analytical model, if any.
-    pub fn metadata(&self) -> Option<&ValidatedModelMetadata> {
-        self.metadata.as_ref()
-    }
-
-    pub fn parameter_index(&self, name: &str) -> Option<usize> {
-        self.metadata()?.parameter_index(name)
-    }
-
-    pub fn covariate_index(&self, name: &str) -> Option<usize> {
-        self.metadata()?.covariate_index(name)
-    }
-
-    pub fn state_index(&self, name: &str) -> Option<usize> {
-        self.metadata()?.state_index(name)
-    }
-
-    fn invalidate_metadata(&mut self) {
-        self.metadata = None;
-    }
-}
-
-fn validate_metadata_dimensions(
-    metadata: &ValidatedModelMetadata,
-    neqs: &Neqs,
-) -> Result<(), AnalyticalMetadataError> {
-    let declared_states = metadata.states().len();
-    if declared_states != neqs.nstates {
-        return Err(AnalyticalMetadataError::StateCountMismatch {
-            expected: neqs.nstates,
-            declared: declared_states,
-        });
-    }
-
-    let declared_routes = metadata.route_input_count();
-    if declared_routes != neqs.ndrugs {
-        return Err(AnalyticalMetadataError::RouteCountMismatch {
-            expected: neqs.ndrugs,
-            declared: declared_routes,
-        });
-    }
-
-    let declared_outputs = metadata.outputs().len();
-    if declared_outputs != neqs.nout {
-        return Err(AnalyticalMetadataError::OutputCountMismatch {
-            expected: neqs.nout,
-            declared: declared_outputs,
-        });
-    }
-
-    Ok(())
-}
-
-impl super::Cache for Analytical {
-    fn with_cache_capacity(mut self, size: usize) -> Self {
-        self.cache = Some(PredictionCache::new(size));
-        self
-    }
-
-    fn enable_cache(mut self) -> Self {
-        self.cache = Some(PredictionCache::new(DEFAULT_CACHE_SIZE));
-        self
-    }
-
-    fn clear_cache(&self) {
-        if let Some(cache) = &self.cache {
-            cache.invalidate_all();
-        }
-    }
-
-    fn disable_cache(mut self) -> Self {
-        self.cache = None;
-        self
-    }
-}
-
-impl EquationPriv for Analytical {
-    type S = V;
-
-    fn empty_predictions(&self) -> SubjectPredictions {
-        SubjectPredictions::default()
-    }
-
-    fn add_bolus(&self, x: &mut V, input: usize, amount: f64) {
-        x[input] += amount;
-    }
-
-    // #[inline(always)]
-    // fn get_init(&self) -> &Init {
-    //     &self.init
-    // }
-
-    // #[inline(always)]
-    // fn get_out(&self) -> &Out {
-    //     &self.out
-    // }
-
-    // #[inline(always)]
-    // fn get_lag(&self, parameters: &[f64]) -> Option<HashMap<usize, f64>> {
-    //     Some((self.lag)(&V::from_vec(parameters.to_owned())))
-    // }
-
-    // #[inline(always)]
-    // fn get_fa(&self, parameters: &[f64]) -> Option<HashMap<usize, f64>> {
-    //     Some((self.fa)(&V::from_vec(parameters.to_owned())))
-    // }
-
-    #[inline(always)]
-    fn lag(&self) -> &Lag {
-        &self.lag
-    }
-
-    #[inline(always)]
-    fn fa(&self) -> &Fa {
-        &self.fa
-    }
-
-    #[inline(always)]
-    fn get_nstates(&self) -> usize {
-        self.neqs.nstates
-    }
-
-    #[inline(always)]
-    fn get_ndrugs(&self) -> usize {
-        self.neqs.ndrugs
-    }
-
-    #[inline(always)]
-    fn get_nouteqs(&self) -> usize {
-        self.neqs.nout
-    }
-
-    #[inline(always)]
-    fn solve(
-        &self,
-        x: &mut Self::S,
-        parameters: &[f64],
-        covariates: &Covariates,
-        infusions: &[Infusion],
-        ti: f64,
-        tf: f64,
-    ) -> Result<(), PharmsolError> {
-        if ti == tf {
-            return Ok(());
-        }
-
-        // 1) Build and sort event times
-        let mut ts = Vec::new();
-        ts.push(ti);
-        ts.push(tf);
-        for inf in infusions {
-            let t0 = inf.time();
-            let t1 = t0 + inf.duration();
-            if t0 > ti && t0 < tf {
-                ts.push(t0)
-            }
-            if t1 > ti && t1 < tf {
-                ts.push(t1)
-            }
-        }
-        ts.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        ts.dedup_by(|a, b| (*a - *b).abs() < 1e-12);
-
-        // 2) March over each sub-interval
-        let mut current_t = ts[0];
-        let mut parameters_v = V::from_vec(parameters.to_vec(), NalgebraContext::new());
-        let mut rateiv = V::zeros(self.get_ndrugs(), NalgebraContext::new());
-
-        for &next_t in &ts[1..] {
-            // prepare parameters and infusion rate for [current_t .. next_t]
-            rateiv.fill(0.0);
-            for inf in infusions {
-                let s = inf.time();
-                let e = s + inf.duration();
-                if current_t >= s && next_t <= e {
-                    let input = inf.input_index().ok_or_else(|| {
-                        let available = self
-                            .metadata()
-                            .map(|m| m.route_labels())
-                            .unwrap_or_default();
-                        PharmsolError::unknown_input_label(inf.input(), &available)
-                    })?;
-
-                    if input >= self.get_ndrugs() {
-                        return Err(PharmsolError::InputOutOfRange {
-                            input,
-                            ndrugs: self.get_ndrugs(),
-                        });
-                    }
-                    rateiv[input] += inf.amount() / inf.duration();
-                }
-            }
-
-            // advance the parameters to next_t
-            (self.seq_eq)(&mut parameters_v, next_t, covariates);
-
-            // advance state by dt
-            let dt = next_t - current_t;
-            *x = (self.eq)(x, &parameters_v, dt, &rateiv, covariates);
-
-            current_t = next_t;
-        }
-
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn process_observation(
-        &self,
-        parameters: &[f64],
-        observation: &Observation,
-        error_models: Option<&AssayErrorModels>,
-        _time: f64,
-        covariates: &Covariates,
-        x: &mut Self::S,
-        likelihood: &mut Vec<f64>,
-        output: &mut Self::P,
-    ) -> Result<(), PharmsolError> {
-        let mut y = V::zeros(self.get_nouteqs(), NalgebraContext::new());
-        let out = &self.out;
-        (out)(
-            x,
-            &V::from_vec(parameters.to_vec(), NalgebraContext::new()),
-            observation.time(),
-            covariates,
-            &mut y,
-        );
-        let outeq = observation.outeq_slot().ok_or_else(|| {
-            let available = self
-                .metadata()
-                .map(|m| m.output_labels())
-                .unwrap_or_default();
-            PharmsolError::unknown_output_label(observation.outeq(), &available)
-        })?;
-        let pred = y[outeq];
-        let pred = observation.to_prediction(pred, x.as_slice().to_vec());
-        if let Some(error_models) = error_models {
-            likelihood.push(pred.log_likelihood(error_models)?.exp());
-        }
-        output.add_prediction(pred);
-        Ok(())
-    }
-    #[inline(always)]
-    fn initial_state(&self, parameters: &[f64], covariates: &Covariates) -> V {
-        let init = &self.init;
-        let mut x = V::zeros(self.get_nstates(), NalgebraContext::new());
-        (init)(
-            &V::from_vec(parameters.to_vec(), NalgebraContext::new()),
-            0.0,
-            covariates,
-            &mut x,
-        );
-        x
-    }
-}
-
-#[allow(clippy::items_after_test_module)]
 #[cfg(test)]
-pub(crate) mod tests {
-    use super::*;
-    use crate::SubjectBuilderExt;
-    use approx::assert_relative_eq;
-    use diffsol::Vector;
-    use pharmsol_dsl::AnalyticalKernel;
-    use std::collections::HashMap;
-
-    pub(crate) enum SubjectInfo {
-        InfusionDosing,
-        OralInfusionDosage,
-    }
-    impl SubjectInfo {
-        pub(crate) fn get_subject(&self) -> Subject {
-            match self {
-                SubjectInfo::InfusionDosing => Subject::builder("id1")
-                    .bolus(0.0, 100.0, 0)
-                    .infusion(24.0, 150.0, 0, 3.0)
-                    .missing_observation(0.0, 0)
-                    .missing_observation(1.0, 0)
-                    .missing_observation(2.0, 0)
-                    .missing_observation(4.0, 0)
-                    .missing_observation(8.0, 0)
-                    .missing_observation(12.0, 0)
-                    .missing_observation(24.0, 0)
-                    .missing_observation(25.0, 0)
-                    .missing_observation(26.0, 0)
-                    .missing_observation(27.0, 0)
-                    .missing_observation(28.0, 0)
-                    .missing_observation(32.0, 0)
-                    .missing_observation(36.0, 0)
-                    .build(),
-
-                SubjectInfo::OralInfusionDosage => Subject::builder("id1")
-                    .bolus(0.0, 100.0, 1)
-                    .infusion(24.0, 150.0, 0, 3.0)
-                    .bolus(48.0, 100.0, 0)
-                    .missing_observation(0.0, 0)
-                    .missing_observation(1.0, 0)
-                    .missing_observation(2.0, 0)
-                    .missing_observation(4.0, 0)
-                    .missing_observation(8.0, 0)
-                    .missing_observation(12.0, 0)
-                    .missing_observation(24.0, 0)
-                    .missing_observation(25.0, 0)
-                    .missing_observation(26.0, 0)
-                    .missing_observation(27.0, 0)
-                    .missing_observation(28.0, 0)
-                    .missing_observation(32.0, 0)
-                    .missing_observation(36.0, 0)
-                    .missing_observation(48.0, 0)
-                    .missing_observation(49.0, 0)
-                    .missing_observation(50.0, 0)
-                    .missing_observation(52.0, 0)
-                    .missing_observation(56.0, 0)
-                    .missing_observation(60.0, 0)
-                    .build(),
-            }
-        }
-    }
-
-    #[test]
-    fn secondary_equations_accumulate_within_single_solve() {
-        let eq = |x: &V, p: &V, dt: f64, _rateiv: &V, _cov: &Covariates| {
-            let mut next = x.clone();
-            next[0] += p[0] * dt;
-            next
-        };
-        let seq_eq = |params: &mut V, _t: f64, _cov: &Covariates| {
-            params[0] += 1.0;
-        };
-        let lag = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
-        let fa = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
-        let init = |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| {
-            x.fill(0.0);
-        };
-        let out = |x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V| {
-            y[0] = x[0];
-        };
-
-        let analytical = Analytical::new(eq, seq_eq, lag, fa, init, out)
-            .with_nstates(1)
-            .with_ndrugs(1)
-            .with_nout(1);
-        let subject = Subject::builder("seq")
-            .bolus(0.0, 0.0, 0)
-            .infusion(0.25, 1.0, 0, 0.25)
-            .observation(1.0, 0.0, 0)
-            .build();
-
-        let predictions = analytical
-            .estimate_predictions(&subject, &crate::parameters::dense([1.0]))
-            .unwrap();
-
-        let value = predictions.predictions()[0].prediction();
-        assert!((value - 2.5).abs() < 1e-12);
-    }
-
-    #[test]
-    fn infusion_inputs_match_state_dimension() {
-        let eq = |x: &V, _p: &V, dt: f64, rateiv: &V, _cov: &Covariates| {
-            let mut next = x.clone();
-            next[0] += rateiv[3] * dt;
-            next
-        };
-        let seq_eq = |_params: &mut V, _t: f64, _cov: &Covariates| {};
-        let lag = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
-        let fa = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
-        let init = |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| {
-            x.fill(0.0);
-        };
-        let out = |x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V| {
-            y[0] = x[0];
-        };
-
-        let analytical = Analytical::new(eq, seq_eq, lag, fa, init, out)
-            .with_nstates(4)
-            .with_ndrugs(4)
-            .with_nout(1);
-        let subject = Subject::builder("inf")
-            .infusion(0.0, 4.0, 3, 1.0)
-            .observation(1.0, 0.0, 0)
-            .build();
-
-        let predictions = analytical
-            .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
-            .unwrap();
-
-        assert_eq!(predictions.predictions()[0].prediction(), 4.0);
-    }
-
-    #[test]
-    fn log_likelihood_matrix_reuses_cached_predictions() {
-        use crate::data::error_model::{AssayErrorModel, ErrorPoly};
-        use crate::simulator::likelihood::log_likelihood_matrix;
-        use crate::{Cache, Data};
-        use ndarray::array;
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        // Counts calls into the structural kernel, i.e. real solves.
-        static KERNEL_CALLS: AtomicUsize = AtomicUsize::new(0);
-
-        let eq = |x: &V, p: &V, dt: f64, _rateiv: &V, _cov: &Covariates| {
-            KERNEL_CALLS.fetch_add(1, Ordering::SeqCst);
-            let mut next = x.clone();
-            next[0] *= (-p[0] * dt).exp();
-            next
-        };
-        let seq_eq = |_params: &mut V, _t: f64, _cov: &Covariates| {};
-        let lag = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
-        let fa = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
-        let init = |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| {
-            x.fill(0.0);
-        };
-        let out = |x: &V, p: &V, _t: f64, _cov: &Covariates, y: &mut V| {
-            y[0] = x[0] / p[1];
-        };
-
-        let analytical = Analytical::new(eq, seq_eq, lag, fa, init, out)
-            .with_nstates(1)
-            .with_ndrugs(1)
-            .with_nout(1);
-        let data = Data::new(vec![Subject::builder("cached")
-            .bolus(0.0, 100.0, 0)
-            .observation(1.0, 4.0, 0)
-            .observation(2.0, 3.5, 0)
-            .build()]);
-        let support_points = array![[0.2, 20.0], [0.3, 25.0]];
-        let error_models = AssayErrorModels::new()
-            .add(
-                0,
-                AssayErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 0.5),
-            )
-            .unwrap();
-
-        let first =
-            log_likelihood_matrix(&analytical, &data, &support_points, &error_models, false)
-                .unwrap();
-        let after_first = KERNEL_CALLS.load(Ordering::SeqCst);
-        assert!(after_first > 0, "the first matrix call must solve");
-        assert_eq!(
-            analytical.cache.as_ref().unwrap().entry_count(),
-            support_points.nrows(),
-            "the first matrix call must fill the prediction cache"
-        );
-
-        let second =
-            log_likelihood_matrix(&analytical, &data, &support_points, &error_models, false)
-                .unwrap();
-        assert_eq!(
-            KERNEL_CALLS.load(Ordering::SeqCst),
-            after_first,
-            "the second matrix call on the same support points must be served from the cache"
-        );
-        assert_eq!(first, second);
-
-        let parameters = crate::parameters::dense([0.2, 20.0]);
-        analytical
-            .estimate_predictions(data.subjects()[0], &parameters)
-            .unwrap();
-        assert_eq!(
-            KERNEL_CALLS.load(Ordering::SeqCst),
-            after_first,
-            "estimate_predictions must reuse the cached prediction"
-        );
-
-        // The cache only saves work: without it the matrix is the same.
-        let uncached = analytical.disable_cache();
-        let third =
-            log_likelihood_matrix(&uncached, &data, &support_points, &error_models, false).unwrap();
-        assert!(KERNEL_CALLS.load(Ordering::SeqCst) > after_first);
-        assert_eq!(first, third);
-    }
-
-    fn simple_analytical() -> Analytical {
-        let eq = |x: &V, _p: &V, _dt: f64, _rateiv: &V, _cov: &Covariates| x.clone();
-        let seq_eq = |_params: &mut V, _t: f64, _cov: &Covariates| {};
-        let lag = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
-        let fa = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
-        let init = |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| {
-            x.fill(0.0);
-        };
-        let out = |x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V| {
-            y[0] = x[0];
-        };
-
-        Analytical::new(eq, seq_eq, lag, fa, init, out)
-            .with_nstates(1)
-            .with_ndrugs(1)
-            .with_nout(1)
-    }
-
-    #[test]
-    fn handwritten_analytical_metadata_exposes_name_lookup() {
-        let analytical = simple_analytical()
-            .with_metadata(
-                super::super::metadata::new("one_cmt_analytical")
-                    .parameters(["ke", "v"])
-                    .covariates([super::super::Covariate::continuous("wt")])
-                    .states(["central"])
-                    .outputs(["cp"])
-                    .route(super::super::Route::infusion("iv").to_state("central")),
-            )
-            .expect("metadata attachment should validate");
-        let metadata = analytical.metadata().expect("metadata exists");
-
-        assert_eq!(analytical.parameter_index("ke"), Some(0));
-        assert_eq!(analytical.parameter_index("v"), Some(1));
-        assert_eq!(analytical.covariate_index("wt"), Some(0));
-        assert_eq!(analytical.state_index("central"), Some(0));
-        assert!(metadata.route("iv").is_some());
-        assert!(metadata.output("cp").is_some());
-        assert_eq!(metadata.kind(), ModelKind::Analytical);
-    }
-
-    #[test]
-    fn handwritten_analytical_metadata_resolves_numeric_labels_by_exact_name() {
-        let eq = |x: &V, _p: &V, dt: f64, rateiv: &V, _cov: &Covariates| {
-            let mut next = x.clone();
-            next[0] += rateiv[0] * dt;
-            next
-        };
-        let seq_eq = |_params: &mut V, _t: f64, _cov: &Covariates| {};
-        let lag = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
-        let fa = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
-        let init = |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| {
-            x.fill(0.0);
-        };
-        let out = |x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V| {
-            y[0] = x[0];
-        };
-
-        let analytical = Analytical::new(eq, seq_eq, lag, fa, init, out)
-            .with_nstates(1)
-            .with_ndrugs(1)
-            .with_nout(1)
-            .with_metadata(
-                super::super::metadata::new("numeric_alias_analytical")
-                    .states(["central"])
-                    .outputs(["1"])
-                    .route(super::super::Route::infusion("1").to_state("central")),
-            )
-            .expect("metadata attachment should validate");
-
-        let numeric = Subject::builder("numeric")
-            .infusion(0.0, 100.0, "1", 1.0)
-            .observation(1.0, 0.0, "1")
-            .build();
-        let prediction = analytical
-            .estimate_predictions(&numeric, &crate::parameters::dense([]))
-            .expect("numeric labels should resolve by exact name")
-            .predictions()[0]
-            .prediction();
-        assert!(prediction > 0.0);
-
-        // `input_1` / `outeq_1` are different names, not aliases of `1`.
-        for prefixed in [
-            Subject::builder("prefixed_input")
-                .infusion(0.0, 100.0, "input_1", 1.0)
-                .observation(1.0, 0.0, "1")
-                .build(),
-            Subject::builder("prefixed_output")
-                .infusion(0.0, 100.0, "1", 1.0)
-                .observation(1.0, 0.0, "outeq_1")
-                .build(),
-        ] {
-            assert!(analytical
-                .estimate_predictions(&prefixed, &crate::parameters::dense([]))
-                .is_err());
-        }
-    }
-
-    #[test]
-    fn handwritten_analytical_without_metadata_keeps_raw_path() {
-        let analytical = simple_analytical();
-
-        assert!(analytical.metadata().is_none());
-        assert_eq!(analytical.state_index("central"), None);
-    }
-
-    #[test]
-    fn handwritten_analytical_rejects_dimension_mismatches() {
-        let error = simple_analytical()
-            .with_metadata(
-                super::super::metadata::new("wrong_outputs")
-                    .parameters(["ke"])
-                    .states(["central"])
-                    .outputs(["cp", "auc"])
-                    .route(super::super::Route::infusion("iv").to_state("central")),
-            )
-            .expect_err("output-count mismatches must fail");
-
-        assert_eq!(
-            error,
-            AnalyticalMetadataError::OutputCountMismatch {
-                expected: 1,
-                declared: 2,
-            }
-        );
-    }
-
-    #[test]
-    fn handwritten_analytical_rejects_particles_metadata() {
-        let error = simple_analytical()
-            .with_metadata(
-                super::super::metadata::new("invalid_particles")
-                    .parameters(["ke"])
-                    .states(["central"])
-                    .outputs(["cp"])
-                    .route(super::super::Route::infusion("iv").to_state("central"))
-                    .particles(64),
-            )
-            .expect_err("analytical metadata must reject particles");
-
-        assert_eq!(
-            error,
-            AnalyticalMetadataError::Validation(ModelMetadataError::ParticlesNotAllowed {
-                kind: ModelKind::Analytical,
-            })
-        );
-    }
-
-    #[test]
-    fn built_in_analytical_models_can_advertise_kernel_identity() {
-        let seq_eq = |_params: &mut V, _t: f64, _cov: &Covariates| {};
-        let lag = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
-        let fa = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
-        let init = |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| {
-            x.fill(0.0);
-        };
-        let out = |x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V| {
-            y[0] = x[1];
-        };
-
-        let analytical =
-            Analytical::new(one_compartment_with_absorption, seq_eq, lag, fa, init, out)
-                .with_nstates(2)
-                .with_ndrugs(1)
-                .with_nout(1)
-                .with_metadata(
-                    super::super::metadata::new("one_cmt_abs")
-                        .parameters(["ka", "ke", "v"])
-                        .states(["gut", "central"])
-                        .outputs(["cp"])
-                        .routes([
-                            super::super::Route::bolus("oral").to_state("gut"),
-                            super::super::Route::infusion("iv").to_state("central"),
-                        ])
-                        .analytical_kernel(AnalyticalKernel::OneCompartmentWithAbsorption),
-                )
-                .expect("built-in analytical metadata should validate");
-
-        assert_eq!(
-            analytical
-                .metadata()
-                .expect("metadata exists")
-                .analytical_kernel(),
-            Some(AnalyticalKernel::OneCompartmentWithAbsorption)
-        );
-        let metadata = analytical.metadata().expect("metadata exists");
-        assert_eq!(
-            metadata.route("oral").map(|route| route.input_index()),
-            Some(0)
-        );
-        assert_eq!(
-            metadata.route("iv").map(|route| route.input_index()),
-            Some(0)
-        );
-    }
-
-    #[test]
-    fn changing_dimensions_after_metadata_clears_analytical_metadata() {
-        let analytical = simple_analytical()
-            .with_metadata(
-                super::super::metadata::new("one_cmt_analytical")
-                    .states(["central"])
-                    .outputs(["cp"])
-                    .route(super::super::Route::infusion("iv").to_state("central")),
-            )
-            .expect("metadata attachment should validate")
-            .with_ndrugs(2);
-
-        assert!(analytical.metadata().is_none());
-    }
-
-    fn assert_pm_wrapper_matches_native(
-        native: AnalyticalEq,
-        wrapper: AnalyticalEq,
-        compact_x: Vec<f64>,
-        params: Vec<f64>,
-        compact_rateiv: Vec<f64>,
-    ) {
-        let covariates = Covariates::new();
-        let compact_x = V::from_vec(compact_x, NalgebraContext::new());
-        let params = V::from_vec(params, NalgebraContext::new());
-        let compact_rateiv = V::from_vec(compact_rateiv, NalgebraContext::new());
-
-        let mut padded_x = vec![1234.0];
-        padded_x.extend(compact_x.as_slice().iter().copied());
-        let padded_x = V::from_vec(padded_x, NalgebraContext::new());
-
-        let mut padded_rateiv = vec![5678.0];
-        padded_rateiv.extend(compact_rateiv.as_slice().iter().copied());
-        let padded_rateiv = V::from_vec(padded_rateiv, NalgebraContext::new());
-
-        let native_output = native(&compact_x, &params, 1.5, &compact_rateiv, &covariates);
-        let wrapped_output = wrapper(&padded_x, &params, 1.5, &padded_rateiv, &covariates);
-
-        assert_eq!(wrapped_output[0], 0.0);
-        assert_eq!(wrapped_output.len(), native_output.len() + 1);
-
-        for (wrapped, native) in wrapped_output
-            .as_slice()
-            .iter()
-            .skip(1)
-            .zip(native_output.as_slice().iter())
-        {
-            assert_relative_eq!(*wrapped, *native, max_relative = 1e-10, epsilon = 1e-10);
-        }
-    }
-
-    #[test]
-    fn pmetrics_wrappers_match_native_helpers() {
-        assert_pm_wrapper_matches_native(
-            one_compartment,
-            pm_one_compartment,
-            vec![100.0],
-            vec![0.2],
-            vec![5.0],
-        );
-        assert_pm_wrapper_matches_native(
-            one_compartment_cl,
-            pm_one_compartment_cl,
-            vec![100.0],
-            vec![0.2, 2.0],
-            vec![5.0],
-        );
-        assert_pm_wrapper_matches_native(
-            one_compartment_with_absorption,
-            pm_one_compartment_with_absorption,
-            vec![10.0, 20.0],
-            vec![1.1, 0.2],
-            vec![5.0],
-        );
-        assert_pm_wrapper_matches_native(
-            one_compartment_cl_with_absorption,
-            pm_one_compartment_cl_with_absorption,
-            vec![10.0, 20.0],
-            vec![1.1, 0.2, 2.0],
-            vec![5.0],
-        );
-        assert_pm_wrapper_matches_native(
-            two_compartments,
-            pm_two_compartments,
-            vec![100.0, 40.0],
-            vec![0.1, 0.3, 0.2],
-            vec![3.0],
-        );
-        assert_pm_wrapper_matches_native(
-            two_compartments_cl,
-            pm_two_compartments_cl,
-            vec![100.0, 40.0],
-            vec![0.1, 0.3, 1.0, 2.0],
-            vec![3.0],
-        );
-        assert_pm_wrapper_matches_native(
-            two_compartments_with_absorption,
-            pm_two_compartments_with_absorption,
-            vec![10.0, 100.0, 40.0],
-            vec![0.1, 1.0, 0.3, 0.2],
-            vec![3.0],
-        );
-        assert_pm_wrapper_matches_native(
-            two_compartments_cl_with_absorption,
-            pm_two_compartments_cl_with_absorption,
-            vec![10.0, 100.0, 40.0],
-            vec![1.0, 0.1, 0.3, 1.0, 2.0],
-            vec![3.0],
-        );
-        assert_pm_wrapper_matches_native(
-            three_compartments,
-            pm_three_compartments,
-            vec![100.0, 40.0, 20.0],
-            vec![0.1, 3.0, 2.0, 1.0, 0.5],
-            vec![2.0],
-        );
-        assert_pm_wrapper_matches_native(
-            three_compartments_cl,
-            pm_three_compartments_cl,
-            vec![100.0, 40.0, 20.0],
-            vec![0.1, 3.0, 2.0, 1.0, 3.0, 4.0],
-            vec![2.0],
-        );
-        assert_pm_wrapper_matches_native(
-            three_compartments_with_absorption,
-            pm_three_compartments_with_absorption,
-            vec![10.0, 100.0, 40.0, 20.0],
-            vec![1.0, 0.1, 3.0, 2.0, 1.0, 0.5],
-            vec![2.0],
-        );
-        assert_pm_wrapper_matches_native(
-            three_compartments_cl_with_absorption,
-            pm_three_compartments_cl_with_absorption,
-            vec![10.0, 100.0, 40.0, 20.0],
-            vec![1.0, 0.1, 3.0, 2.0, 1.0, 3.0, 4.0],
-            vec![2.0],
-        );
-    }
-}
-impl Equation for Analytical {
-    type P = SubjectPredictions;
-
-    fn metadata(&self) -> Option<&ValidatedModelMetadata> {
-        self.metadata.as_ref()
-    }
-
-    fn nstates(&self) -> usize {
-        self.neqs.nstates
-    }
-
-    fn nouteqs(&self) -> usize {
-        self.neqs.nout
-    }
-
-    fn estimate_predictions(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-    ) -> Result<SubjectPredictions, PharmsolError> {
-        _subject_predictions(self, subject, parameters)
-    }
-
-    fn estimate_log_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        self.validate_error_models(error_models)?;
-        _subject_predictions(self, subject, parameters)?.log_likelihood(error_models)
-    }
-}
-
-#[inline(always)]
-fn _subject_predictions(
-    analytical: &Analytical,
-    subject: &Subject,
-    parameters: &[f64],
-) -> Result<SubjectPredictions, PharmsolError> {
-    if let Some(cache) = &analytical.cache {
-        let key = (subject.hash(), parameters_hash(parameters));
-        if let Some(cached) = cache.get(&key) {
-            return Ok(cached);
-        }
-
-        let result = simulate_events(analytical, subject, parameters, None)?.0;
-        cache.insert(key, result.clone());
-        Ok(result)
-    } else {
-        Ok(simulate_events(analytical, subject, parameters, None)?.0)
-    }
-}
+pub(crate) mod tests;

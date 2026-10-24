@@ -8,12 +8,11 @@ use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
 
-pub use super::backend::CompiledModelFunction;
+pub use super::artifact::CompiledModelFunction;
+use super::artifact::RuntimeExecutionArtifact;
 #[cfg(test)]
-use super::backend::{estimate_effect_2_callback, estimate_effect_3_callback};
-use super::backend::{
-    RuntimeAnalyticalModel, RuntimeExecutionArtifact, RuntimeOdeModel, RuntimeSdeModel,
-};
+use super::artifact::{estimate_effect_2_callback, estimate_effect_3_callback};
+use super::model::{RuntimeAnalyticalModel, RuntimeOdeModel, RuntimeSdeModel};
 use super::model_info::RuntimeModelInfo;
 use super::runtime::CompiledRuntimeModel;
 use pharmsol_dsl::execution::{
@@ -1381,7 +1380,7 @@ pub fn compile_ode_model_to_jit(
             Some(model.span),
         ));
     }
-    RuntimeOdeModel::new(
+    RuntimeOdeModel::compiled(
         RuntimeModelInfo::from_execution_model(model),
         compile_execution_artifact(model)?,
     )
@@ -1401,7 +1400,7 @@ pub fn compile_analytical_model_to_jit(
             Some(model.span),
         ));
     }
-    RuntimeAnalyticalModel::new(
+    RuntimeAnalyticalModel::compiled(
         RuntimeModelInfo::from_execution_model(model),
         compile_execution_artifact(model)?,
     )
@@ -1421,7 +1420,7 @@ pub fn compile_sde_model_to_jit(
             Some(model.span),
         ));
     }
-    RuntimeSdeModel::new(
+    RuntimeSdeModel::compiled(
         RuntimeModelInfo::from_execution_model(model),
         compile_execution_artifact(model)?,
     )
