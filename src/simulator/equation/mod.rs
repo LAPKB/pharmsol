@@ -188,18 +188,20 @@ pub trait Equation: Clone + Send + Sync + 'static {
 
     /// Simulate a subject and, when error models are given, also return the
     /// likelihood (not log-likelihood) of its observations.
+    ///
+    /// The default scores the returned predictions, so it simulates once.
     fn simulate_subject(
         &self,
         subject: &Subject,
         parameters: &[f64],
         error_models: Option<&AssayErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
+        if let Some(error_models) = error_models {
+            self.validate_error_models(error_models)?;
+        }
         let predictions = self.estimate_predictions(subject, parameters)?;
         let likelihood = match error_models {
-            Some(error_models) => Some(
-                self.estimate_log_likelihood(subject, parameters, error_models)?
-                    .exp(),
-            ),
+            Some(error_models) => Some(predictions.log_likelihood(error_models)?.exp()),
             None => None,
         };
         Ok((predictions, likelihood))

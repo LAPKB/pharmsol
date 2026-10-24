@@ -69,14 +69,26 @@ impl<K: Eq + Hash + Clone, V: Clone> SimulationCache<K, V> {
 
     /// Return the cached value, or compute and cache it.
     ///
-    /// Concurrent callers missing on the same key wait for one computation.
-    /// Errors are returned and not cached.
+    /// Errors are returned and not cached. The cache holds no lock while
+    /// `compute` runs: concurrent misses on one key may both compute it, but a
+    /// computation that itself waits on parallel work can never block on its
+    /// own key.
     pub fn get_or_try_insert<E>(
         &self,
         key: K,
         compute: impl FnOnce() -> Result<V, E>,
     ) -> Result<V, E> {
-        self.0.get_or_insert_with(&key, compute)
+        if let Some(value) = self.0.get(&key) {
+            return Ok(value);
+        }
+        let value = compute()?;
+        self.0.insert(key, value.clone());
+        Ok(value)
+    }
+
+    /// An empty cache with the same capacity, not shared with this one.
+    pub fn emptied(&self) -> Self {
+        Self::new(self.0.capacity() as usize)
     }
 
     /// Remove all entries from the cache.
@@ -239,6 +251,16 @@ mod tests {
 #[cfg(test)]
 mod get_or_try_insert_tests {
     use super::*;
+
+    #[test]
+    fn emptied_cache_is_separate() {
+        let cache = SdeLikelihoodCache::new(10);
+        cache.insert((1, 1, 1), 1.0);
+        let emptied = cache.emptied();
+        assert_eq!(emptied.entry_count(), 0);
+        emptied.insert((2, 2, 2), 2.0);
+        assert!(cache.get(&(2, 2, 2)).is_none());
+    }
 
     #[test]
     fn computes_once_and_does_not_cache_errors() {

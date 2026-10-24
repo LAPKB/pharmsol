@@ -171,6 +171,15 @@ impl<M: OdeModel> ODE<M> {
         &self.model
     }
 
+    /// Mutable access to the model functions.
+    ///
+    /// Cached results were computed with the old model, so this equation
+    /// switches to a fresh, empty cache of the same size (clones keep theirs).
+    pub(crate) fn model_mut(&mut self) -> &mut M {
+        self.cache = self.cache.as_ref().map(|cache| cache.emptied());
+        &mut self.model
+    }
+
     #[cfg(all(test, feature = "dsl"))]
     pub(crate) fn prediction_cache(&self) -> Option<&PredictionCache> {
         self.cache.as_ref()

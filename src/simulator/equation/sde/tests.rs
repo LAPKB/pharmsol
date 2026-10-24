@@ -434,3 +434,58 @@ fn impossible_observation_has_zero_likelihood() {
         .unwrap();
     assert_eq!(log_likelihood, f64::NEG_INFINITY);
 }
+
+#[test]
+fn simulate_subject_returns_one_filtered_run() {
+    let sde = simple_sde().disable_cache();
+    let subject = filter_subject();
+    let error_models = filter_error_models();
+    let parameters = [1.0, 50.0];
+
+    let (predictions, likelihood) = sde
+        .simulate_subject(&subject, &parameters, Some(&error_models))
+        .unwrap();
+    let log_likelihood = sde
+        .estimate_log_likelihood(&subject, &parameters, &error_models)
+        .unwrap();
+    assert_eq!(predictions.dim(), (128, 3));
+    assert_eq!(likelihood.unwrap().ln(), log_likelihood);
+
+    // The particles are the filtered ones: identical to an unfiltered run up
+    // to the first resampling, different after it.
+    let unfiltered = sde.estimate_predictions(&subject, &parameters).unwrap();
+    let column = |m: &Array2<Prediction>, j: usize| -> Vec<f64> {
+        m.column(j).iter().map(Prediction::prediction).collect()
+    };
+    assert_eq!(column(&predictions, 0), column(&unfiltered, 0));
+    assert_ne!(column(&predictions, 2), column(&unfiltered, 2));
+}
+
+#[test]
+fn particles_the_data_rules_out_get_zero_weight() {
+    use crate::data::error_model::{AssayErrorModel, ErrorPoly};
+    let sde = simple_sde().disable_cache();
+    // So far from the particles that every per-particle log-density is -inf.
+    let subject = Subject::builder("far")
+        .observation(1.0, 1.0e6, 0)
+        .observation(2.0, 1.0, 0)
+        .build();
+    let error_models = AssayErrorModels::new()
+        .add(
+            0,
+            AssayErrorModel::additive(ErrorPoly::new(1.0e-200, 0.0, 0.0, 0.0), 0.0),
+        )
+        .unwrap();
+
+    let log_likelihood = sde
+        .estimate_log_likelihood(&subject, &[1.0, 50.0], &error_models)
+        .unwrap();
+    assert_eq!(log_likelihood, f64::NEG_INFINITY);
+
+    // Predictions still cover every observation.
+    let (predictions, likelihood) = sde
+        .simulate_subject(&subject, &[1.0, 50.0], Some(&error_models))
+        .unwrap();
+    assert_eq!(predictions.dim(), (128, 2));
+    assert_eq!(likelihood, Some(0.0));
+}

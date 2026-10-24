@@ -187,23 +187,23 @@ impl SDE<NativeSde> {
 
     /// Set the number of state variables. Clears attached metadata.
     pub fn with_nstates(mut self, nstates: usize) -> Self {
-        self.model.neqs.nstates = nstates;
-        self.model.clear_metadata();
+        self.model_mut().neqs.nstates = nstates;
+        self.model_mut().clear_metadata();
         self
     }
 
     /// Set the number of drug inputs (size of `rateiv`). Clears attached
     /// metadata.
     pub fn with_ndrugs(mut self, ndrugs: usize) -> Self {
-        self.model.neqs.ndrugs = ndrugs;
-        self.model.clear_metadata();
+        self.model_mut().neqs.ndrugs = ndrugs;
+        self.model_mut().clear_metadata();
         self
     }
 
     /// Set the number of output equations. Clears attached metadata.
     pub fn with_nout(mut self, nout: usize) -> Self {
-        self.model.neqs.nout = nout;
-        self.model.clear_metadata();
+        self.model_mut().neqs.nout = nout;
+        self.model_mut().clear_metadata();
         self
     }
 
@@ -213,7 +213,7 @@ impl SDE<NativeSde> {
         let metadata = metadata.validate_for_with_particles(ModelKind::Sde, self.nparticles)?;
         let neqs = &self.model.neqs;
         check_dimensions(&metadata, neqs.nstates, neqs.ndrugs, neqs.nout)?;
-        self.model.metadata = Some(metadata);
+        self.model_mut().metadata = Some(metadata);
         Ok(self)
     }
 
@@ -226,7 +226,7 @@ impl SDE<NativeSde> {
         for (input, destination) in destinations.iter().copied().take(ndrugs).enumerate() {
             mapped[input] = destination;
         }
-        self.model.bolus_destinations = mapped;
+        self.model_mut().bolus_destinations = mapped;
         self
     }
 

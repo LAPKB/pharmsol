@@ -91,6 +91,15 @@ impl<M: SdeModel> SDE<M> {
         &self.model
     }
 
+    /// Mutable access to the model functions.
+    ///
+    /// Cached results were computed with the old model, so this equation
+    /// switches to a fresh, empty cache of the same size (clones keep theirs).
+    pub(crate) fn model_mut(&mut self) -> &mut M {
+        self.cache = self.cache.as_ref().map(|cache| cache.emptied());
+        &mut self.model
+    }
+
     /// Number of particles.
     pub fn nparticles(&self) -> usize {
         self.nparticles
@@ -131,16 +140,12 @@ impl<M: SdeModel> SDE<M> {
         self.model.metadata()?.state_index(name)
     }
 
-    /// Simulate a subject's particles.
-    ///
-    /// With error models, run the particle filter: resample at every
-    /// observation and return the log-likelihood estimate. Without, the
-    /// particles evolve independently and the log-likelihood is zero.
+    /// Simulate a subject's particles; see [`Mode`].
     fn simulate(
         &self,
         subject: &Subject,
         parameters: &[f64],
-        error_models: Option<&AssayErrorModels>,
+        mode: Mode,
     ) -> Result<ParticleRun, PharmsolError> {
         let in_context = |error| with_subject_context(&self.model, error, subject.id(), parameters);
         self.model
@@ -154,9 +159,9 @@ impl<M: SdeModel> SDE<M> {
             streams: RandomStreams::new(self.seed, subject.hash()),
         };
         for occasion in subject.occasions() {
-            self.simulate_occasion(occasion, &p, error_models, &mut run)
+            self.simulate_occasion(occasion, &p, mode, &mut run)
                 .map_err(in_context)?;
-            if run.log_likelihood == f64::NEG_INFINITY {
+            if mode.stops_at_zero_likelihood() && run.log_likelihood == f64::NEG_INFINITY {
                 break;
             }
         }
@@ -167,7 +172,7 @@ impl<M: SdeModel> SDE<M> {
         &self,
         occasion: &Occasion,
         p: &V,
-        error_models: Option<&AssayErrorModels>,
+        mode: Mode,
         run: &mut ParticleRun,
     ) -> Result<(), PharmsolError> {
         let covariates = occasion.covariates();
@@ -212,19 +217,24 @@ impl<M: SdeModel> SDE<M> {
                         );
                     }
 
+                    let error_models = mode
+                        .error_models()
+                        .filter(|_| run.log_likelihood > f64::NEG_INFINITY);
                     if let Some(error_models) = error_models {
                         let column = &run.predictions[first..];
-                        let resampled = filter(column, error_models, &mut run.streams.next())?;
-                        match resampled {
+                        match filter(column, error_models, &mut run.streams.next())? {
                             Some((log_mean, indices)) => {
                                 run.log_likelihood += log_mean;
                                 particles = indices.iter().map(|&i| particles[i].clone()).collect();
                             }
-                            None => {
-                                run.log_likelihood = f64::NEG_INFINITY;
-                                return Ok(());
-                            }
+                            None => run.log_likelihood = f64::NEG_INFINITY,
                         }
+                    }
+                    if !mode.keeps_predictions() {
+                        run.predictions.truncate(first);
+                    }
+                    if mode.stops_at_zero_likelihood() && run.log_likelihood == f64::NEG_INFINITY {
+                        return Ok(());
                     }
                 }
             }
@@ -260,18 +270,15 @@ impl<M: SdeModel> SDE<M> {
             return Ok(());
         }
 
-        particles
-            .par_iter_mut()
-            .enumerate()
-            .try_for_each(|(index, particle)| {
-                let model = &self.model;
-                let mut ws = model.workspace();
-                let mut rates = V::zeros(model.ninputs(), NalgebraContext::new());
+        let model = &self.model;
+        particles.par_iter_mut().enumerate().try_for_each_init(
+            || ParticleScratch::new(model),
+            |scratch, (index, particle)| {
+                let ParticleScratch { ws, rates, em } = scratch;
                 let mut rng = StdRng::seed_from_u64(mix(seed, index as u64));
-                let mut scratch = EmScratch::new(model.nstates());
                 // Drift and diffusion are evaluated one after the other, never
                 // at once, so they can share the workspace and rates.
-                let shared = std::cell::RefCell::new((&mut ws, &mut rates));
+                let shared = std::cell::RefCell::new((ws, rates));
                 let mut drift = |time: f64, x: &V, dx: &mut V| {
                     let (ws, rates) = &mut *shared.borrow_mut();
                     fill_active_rates(infusions, time, rates);
@@ -289,9 +296,10 @@ impl<M: SdeModel> SDE<M> {
                     start,
                     end,
                     &mut rng,
-                    &mut scratch,
+                    em,
                 )
-            })
+            },
+        )
     }
 
     /// Cached particle-filter log-likelihood.
@@ -302,7 +310,7 @@ impl<M: SdeModel> SDE<M> {
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         let simulate = || {
-            self.simulate(subject, parameters, Some(error_models))
+            self.simulate(subject, parameters, Mode::Score(error_models))
                 .map(|run| run.log_likelihood)
         };
         match &self.cache {
@@ -319,9 +327,57 @@ impl<M: SdeModel> SDE<M> {
     }
 }
 
+/// What a particle run computes.
+#[derive(Clone, Copy)]
+enum Mode<'a> {
+    /// Particles evolve independently; no likelihood.
+    Predict,
+    /// Run the particle filter (resample at every observation) for the
+    /// likelihood only. Stops at the first observation no particle explains.
+    Score(&'a AssayErrorModels),
+    /// Run the particle filter and keep every prediction, through the whole
+    /// subject.
+    ScoreAndPredict(&'a AssayErrorModels),
+}
+
+impl<'a> Mode<'a> {
+    fn error_models(self) -> Option<&'a AssayErrorModels> {
+        match self {
+            Mode::Predict => None,
+            Mode::Score(error_models) | Mode::ScoreAndPredict(error_models) => Some(error_models),
+        }
+    }
+
+    fn keeps_predictions(self) -> bool {
+        !matches!(self, Mode::Score(_))
+    }
+
+    fn stops_at_zero_likelihood(self) -> bool {
+        matches!(self, Mode::Score(_))
+    }
+}
+
+/// Buffers one rayon worker reuses across the particles it advances.
+struct ParticleScratch<W> {
+    ws: W,
+    rates: V,
+    em: EmScratch,
+}
+
+impl<W> ParticleScratch<W> {
+    fn new<M: Model<Workspace = W>>(model: &M) -> Self {
+        Self {
+            ws: model.workspace(),
+            rates: V::zeros(model.ninputs(), NalgebraContext::new()),
+            em: EmScratch::new(model.nstates()),
+        }
+    }
+}
+
 /// The outcome of simulating one subject.
 struct ParticleRun {
-    /// Predictions in observation order, `nparticles` per observation.
+    /// Predictions in observation order, `nparticles` per observation
+    /// (empty in [`Mode::Score`]).
     predictions: Vec<Prediction>,
     log_likelihood: f64,
     streams: RandomStreams,
@@ -351,7 +407,14 @@ fn filter(
 ) -> Result<Option<(f64, Vec<usize>)>, PharmsolError> {
     let mut weights = Vec::with_capacity(predictions.len());
     for prediction in predictions {
-        weights.push(prediction.log_likelihood(error_models)?.exp());
+        // A particle the observation cannot have come from (including one
+        // whose state diverged to NaN) gets zero weight.
+        let weight = match prediction.log_likelihood(error_models) {
+            Ok(log_likelihood) => log_likelihood.exp(),
+            Err(PharmsolError::NonFiniteLikelihood(_)) => 0.0,
+            Err(error) => return Err(error),
+        };
+        weights.push(weight);
     }
     let total: f64 = weights.iter().sum();
     if !(total > 0.0 && total.is_finite()) {
@@ -489,7 +552,7 @@ impl<M: SdeModel> Equation for SDE<M> {
         subject: &Subject,
         parameters: &[f64],
     ) -> Result<Array2<Prediction>, PharmsolError> {
-        self.simulate(subject, parameters, None)?
+        self.simulate(subject, parameters, Mode::Predict)?
             .into_matrix(self.nparticles)
     }
 
@@ -502,6 +565,23 @@ impl<M: SdeModel> Equation for SDE<M> {
     ) -> Result<f64, PharmsolError> {
         self.validate_error_models(error_models)?;
         self.log_likelihood(subject, parameters, error_models)
+    }
+
+    /// One particle-filter run: the filtered (resampled) particle predictions
+    /// and the likelihood estimate they produced. Uncached.
+    fn simulate_subject(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+        error_models: Option<&AssayErrorModels>,
+    ) -> Result<(Array2<Prediction>, Option<f64>), PharmsolError> {
+        let Some(error_models) = error_models else {
+            return Ok((self.estimate_predictions(subject, parameters)?, None));
+        };
+        self.validate_error_models(error_models)?;
+        let run = self.simulate(subject, parameters, Mode::ScoreAndPredict(error_models))?;
+        let likelihood = run.log_likelihood.exp();
+        Ok((run.into_matrix(self.nparticles)?, Some(likelihood)))
     }
 }
 

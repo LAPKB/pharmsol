@@ -16,6 +16,7 @@ use diffsol::VectorHost;
 use thiserror::Error;
 
 use crate::{
+    data::event::SameTimeOrder,
     data::{Covariates, Event, InputLabel, Observation, Occasion, OutputLabel},
     simulator::V,
     PharmsolError,
@@ -221,12 +222,11 @@ impl Step<'_> {
         }
     }
 
-    /// Order at equal times: observations, then boluses, then infusions.
-    fn rank(&self) -> u8 {
+    fn same_time_order(&self) -> SameTimeOrder {
         match self {
-            Step::Observation { .. } => 0,
-            Step::Bolus { .. } => 1,
-            Step::Infusion(_) => 2,
+            Step::Observation { .. } => SameTimeOrder::Observation,
+            Step::Bolus { .. } => SameTimeOrder::Bolus,
+            Step::Infusion(_) => SameTimeOrder::Infusion,
         }
     }
 }
@@ -282,7 +282,11 @@ pub(crate) fn prepare_occasion<'a, M: Model>(
         steps.push(step);
     }
 
-    steps.sort_by(|a, b| a.time().total_cmp(&b.time()).then(a.rank().cmp(&b.rank())));
+    steps.sort_by(|a, b| {
+        a.time()
+            .total_cmp(&b.time())
+            .then(a.same_time_order().cmp(&b.same_time_order()))
+    });
     Ok(Schedule { steps, infusions })
 }
 

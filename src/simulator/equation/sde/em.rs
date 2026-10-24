@@ -37,7 +37,9 @@ impl EmScratch {
 ///
 /// Each attempt compares one full step with two half steps and accepts the
 /// half-step result when the scaled difference is at most one. Steps never
-/// cross `tf`, and a step at the minimum size is always accepted.
+/// cross `tf`, and a step at the minimum size, or one whose error cannot be
+/// measured, is always accepted, so integration always reaches `tf`. A
+/// particle whose state turns NaN stays NaN.
 ///
 /// `drift` and `diffusion` write the coefficients at `(t, x)` into their
 /// output, which is zeroed first.
@@ -84,7 +86,7 @@ where
         )?;
 
         let error = scaled_error(x, full_step, half_steps);
-        if error <= 1.0 || dt <= MIN_STEP {
+        if error <= 1.0 || dt <= MIN_STEP || error.is_nan() {
             t += dt;
             x.copy_from(half_steps);
         }
@@ -123,7 +125,8 @@ where
 }
 
 /// Largest component-wise difference between two approximations, scaled by
-/// the tolerance at the starting state.
+/// the tolerance at the starting state. Components that are NaN in either
+/// approximation are skipped (`f64::max` ignores NaN).
 fn scaled_error(start: &V, full_step: &V, half_steps: &V) -> f64 {
     let mut error = 0.0f64;
     for i in 0..start.len() {
@@ -189,5 +192,38 @@ mod tests {
             &mut scratch,
         );
         assert!(result.is_err());
+    }
+}
+
+#[cfg(test)]
+mod divergence {
+    use super::*;
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
+
+    #[test]
+    fn diverging_particles_still_reach_the_end_time() {
+        let mut x = V::from_vec(vec![1.0, 2.0], NalgebraContext::new());
+        let mut scratch = EmScratch::new(2);
+        let mut rng = StdRng::seed_from_u64(0);
+        let mut nan = |_t: f64, _x: &V, dx: &mut V| {
+            dx[0] = f64::NAN;
+            Ok(())
+        };
+        let mut inf_sigma = |_t: f64, _x: &V, s: &mut V| {
+            s[1] = f64::INFINITY;
+            Ok(())
+        };
+        advance(
+            &mut nan,
+            &mut inf_sigma,
+            &mut x,
+            0.0,
+            5.0,
+            &mut rng,
+            &mut scratch,
+        )
+        .unwrap();
+        assert!(x[0].is_nan());
     }
 }

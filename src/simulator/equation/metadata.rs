@@ -215,11 +215,10 @@ impl ValidatedModelMetadata {
     }
 
     /// Look up a route by public name and kind, returning its
-    /// declaration-order index.
+    /// declaration-order index. Matches like [`Self::route_for_label`].
     pub fn route_declaration_index_by_kind(&self, name: &str, kind: RouteKind) -> Option<usize> {
-        self.routes
-            .iter()
-            .position(|route| route.kind() == kind && route.name() == name)
+        self.route_for_label(name, kind)
+            .map(ValidatedRoute::declaration_index)
     }
 
     /// Resolve a public route label from data to a declared route of the
@@ -1574,5 +1573,24 @@ mod tests {
                 fallback: 128,
             }
         );
+    }
+
+    #[test]
+    fn either_kind_routes_resolve_for_both_kinds_in_every_lookup() {
+        let metadata = new("either_kind")
+            .kind(ModelKind::Ode)
+            .states(["central"])
+            .outputs(["cp"])
+            .route(Route::bolus("iv").to_state("central").accept_either_kind())
+            .validate()
+            .unwrap();
+
+        for kind in [RouteKind::Bolus, RouteKind::Infusion] {
+            assert!(metadata.route_for_label("iv", kind).is_some());
+            assert_eq!(
+                metadata.route_declaration_index_by_kind("iv", kind),
+                Some(0)
+            );
+        }
     }
 }

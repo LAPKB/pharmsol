@@ -851,3 +851,51 @@ fn ode_infusions_long_horizon_boundary_failures_do_not_accumulate() {
     assert!(predictions[0].is_finite());
     assert!(predictions[0] > 0.0);
 }
+
+static MODEL_SWAP_DIFFEQ_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+fn model_swap_counting_function(
+    _x: &V,
+    _p: &V,
+    _t: f64,
+    dx: &mut V,
+    _b: &V,
+    _rateiv: &V,
+    _cov: &Covariates,
+) {
+    MODEL_SWAP_DIFFEQ_CALLS.fetch_add(1, Ordering::SeqCst);
+    dx[0] = 0.0;
+}
+
+#[test]
+fn changing_the_model_starts_a_fresh_cache() {
+    let base = ODE::new(
+        model_swap_counting_function,
+        zero_lag,
+        unit_fa,
+        zero_init,
+        state_output,
+    )
+    .with_nstates(1)
+    .with_ndrugs(1)
+    .with_nout(1);
+    let subject = Subject::builder("model_swap")
+        .bolus(0.0, 100.0, 0)
+        .observation(1.0, 0.0, 0)
+        .build();
+    let parameters = crate::parameters::dense([]);
+
+    base.estimate_predictions(&subject, &parameters).unwrap();
+    let after_first = MODEL_SWAP_DIFFEQ_CALLS.load(Ordering::SeqCst);
+    base.clone()
+        .estimate_predictions(&subject, &parameters)
+        .unwrap();
+    assert_eq!(MODEL_SWAP_DIFFEQ_CALLS.load(Ordering::SeqCst), after_first);
+
+    // Same key, but a changed model must not reuse the shared entry.
+    base.clone()
+        .with_nout(1)
+        .estimate_predictions(&subject, &parameters)
+        .unwrap();
+    assert!(MODEL_SWAP_DIFFEQ_CALLS.load(Ordering::SeqCst) > after_first);
+}
