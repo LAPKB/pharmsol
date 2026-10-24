@@ -16,7 +16,7 @@ use diffsol::VectorHost;
 use thiserror::Error;
 
 use crate::{
-    data::{Covariates, Event, Infusion, InputLabel, Occasion, OutputLabel},
+    data::{Covariates, Event, InputLabel, Observation, Occasion, OutputLabel},
     simulator::V,
     PharmsolError,
 };
@@ -178,73 +178,123 @@ pub(crate) fn resolve_output<M: Model>(
     Ok(outeq)
 }
 
+/// An infusion with its input resolved to a dense index.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct InfusionDose {
+    pub(crate) time: f64,
+    pub(crate) duration: f64,
+    pub(crate) amount: f64,
+    pub(crate) input: usize,
+}
+
+impl InfusionDose {
+    pub(crate) fn end(&self) -> f64 {
+        self.time + self.duration
+    }
+
+    pub(crate) fn rate(&self) -> f64 {
+        self.amount / self.duration
+    }
+}
+
+/// One event of an occasion with its labels resolved, ready to simulate.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Step<'a> {
+    Bolus {
+        time: f64,
+        input: usize,
+        amount: f64,
+    },
+    Infusion(InfusionDose),
+    Observation {
+        observation: &'a Observation,
+        outeq: usize,
+    },
+}
+
+impl Step<'_> {
+    pub(crate) fn time(&self) -> f64 {
+        match self {
+            Step::Bolus { time, .. } => *time,
+            Step::Infusion(infusion) => infusion.time,
+            Step::Observation { observation, .. } => observation.time(),
+        }
+    }
+
+    /// Order at equal times: observations, then boluses, then infusions.
+    fn rank(&self) -> u8 {
+        match self {
+            Step::Observation { .. } => 0,
+            Step::Bolus { .. } => 1,
+            Step::Infusion(_) => 2,
+        }
+    }
+}
+
+/// The steps of one occasion, plus its infusions for rate lookups.
+pub(crate) struct Schedule<'a> {
+    pub(crate) steps: Vec<Step<'a>>,
+    pub(crate) infusions: Vec<InfusionDose>,
+}
+
 /// Turn an occasion's events into the schedule a family driver runs.
 ///
 /// Resolves every label to a dense index, delays boluses by their lag,
 /// scales them by bioavailability, and sorts the result by time (observations
 /// before doses at equal times).
-pub(crate) fn prepare_occasion<M: Model>(
+pub(crate) fn prepare_occasion<'a, M: Model>(
     model: &M,
     ws: &mut M::Workspace,
-    occasion: &Occasion,
+    occasion: &'a Occasion,
     p: &V,
-) -> Result<Vec<Event>, PharmsolError> {
+) -> Result<Schedule<'a>, PharmsolError> {
     let covariates = occasion.covariates();
-    let mut events = occasion.events().to_vec();
+    let mut steps = Vec::with_capacity(occasion.events().len());
+    let mut infusions = Vec::new();
 
-    for event in events.iter_mut() {
-        match event {
+    for event in occasion.events() {
+        let step = match event {
             Event::Bolus(bolus) => {
                 let input = resolve_input(model, bolus.input(), RouteKind::Bolus)?;
-                bolus.set_input(input);
-
-                let lag = model.lag(ws, input, bolus.time(), p, covariates)?;
-                if lag != 0.0 {
-                    *bolus.mut_time() += lag;
-                }
-                let fa = model.bioavailability(ws, input, bolus.time(), p, covariates)?;
-                if fa != 1.0 {
-                    bolus.set_amount(bolus.amount() * fa);
+                let time = bolus.time() + model.lag(ws, input, bolus.time(), p, covariates)?;
+                let fa = model.bioavailability(ws, input, time, p, covariates)?;
+                Step::Bolus {
+                    time,
+                    input,
+                    amount: bolus.amount() * fa,
                 }
             }
             Event::Infusion(infusion) => {
-                let input = resolve_input(model, infusion.input(), RouteKind::Infusion)?;
-                infusion.set_input(input);
+                let dose = InfusionDose {
+                    time: infusion.time(),
+                    duration: infusion.duration(),
+                    amount: infusion.amount(),
+                    input: resolve_input(model, infusion.input(), RouteKind::Infusion)?,
+                };
+                infusions.push(dose);
+                Step::Infusion(dose)
             }
-            Event::Observation(observation) => {
-                let outeq = resolve_output(model, observation.outeq())?;
-                observation.set_outeq_slot(outeq);
-            }
-        }
+            Event::Observation(observation) => Step::Observation {
+                observation,
+                outeq: resolve_output(model, observation.outeq())?,
+            },
+        };
+        steps.push(step);
     }
 
-    events.sort_by(Event::cmp_time_then_type);
-    Ok(events)
-}
-
-/// The infusions in a prepared schedule.
-pub(crate) fn infusions(events: &[Event]) -> Vec<Infusion> {
-    events
-        .iter()
-        .filter_map(|event| match event {
-            Event::Infusion(infusion) => Some(infusion.clone()),
-            _ => None,
-        })
-        .collect()
+    steps.sort_by(|a, b| a.time().total_cmp(&b.time()).then(a.rank().cmp(&b.rank())));
+    Ok(Schedule { steps, infusions })
 }
 
 /// Fill `rates` with the total rate of every infusion running at `time`.
 ///
 /// An infusion counts as running on its closed interval `[start, end]`.
-pub(crate) fn fill_active_rates(infusions: &[Infusion], time: f64, rates: &mut V) {
+pub(crate) fn fill_active_rates(infusions: &[InfusionDose], time: f64, rates: &mut V) {
     let rates = rates.as_mut_slice();
     rates.fill(0.0);
     for infusion in infusions {
-        let input = infusion
-            .input_index()
-            .expect("prepared infusions carry a dense input index");
-        if time >= infusion.time() && time <= infusion.time() + infusion.duration() {
-            rates[input] += infusion.amount() / infusion.duration();
+        if time >= infusion.time && time <= infusion.end() {
+            rates[infusion.input] += infusion.rate();
         }
     }
 }

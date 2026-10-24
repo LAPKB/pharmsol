@@ -23,13 +23,15 @@ use rayon::prelude::*;
 
 use em::EmScratch;
 
-use super::model::{fill_active_rates, infusions, prepare_occasion, with_subject_context, Model};
+use super::model::{
+    fill_active_rates, prepare_occasion, with_subject_context, InfusionDose, Model, Step,
+};
 use super::{parameters_hash, Cache, Equation, Predictions, ValidatedModelMetadata};
 use crate::data::error_model::AssayErrorModels;
 use crate::prelude::simulator::Prediction;
 use crate::simulator::cache::{SdeLikelihoodCache, DEFAULT_CACHE_SIZE};
 use crate::simulator::V;
-use crate::{Covariates, Event, Infusion, Occasion, PharmsolError, Subject};
+use crate::{Covariates, Occasion, PharmsolError, Subject};
 
 /// Model functions for an [`SDE`].
 pub trait SdeModel: Model {
@@ -99,8 +101,13 @@ impl<M: SdeModel> SDE<M> {
         self.seed
     }
 
-    pub(crate) fn cache_enabled(&self) -> bool {
-        self.cache.is_some()
+    /// Swap in a model with a different particle count, keeping the seed and
+    /// the (shared) cache. Cache keys include the particle count.
+    #[cfg(feature = "dsl")]
+    pub(crate) fn with_model(mut self, model: M, nparticles: usize) -> Self {
+        self.model = model;
+        self.nparticles = nparticles;
+        self
     }
 
     /// Use a different random seed.
@@ -165,39 +172,29 @@ impl<M: SdeModel> SDE<M> {
     ) -> Result<(), PharmsolError> {
         let covariates = occasion.covariates();
         let mut ws = self.model.workspace();
-        let events = prepare_occasion(&self.model, &mut ws, occasion, p)?;
-        let infusions = infusions(&events);
+        let schedule = prepare_occasion(&self.model, &mut ws, occasion, p)?;
         let mut initial = V::zeros(self.model.nstates(), NalgebraContext::new());
         self.model.init(&mut ws, 0.0, p, covariates, &mut initial)?;
         let mut particles = vec![initial; self.nparticles];
         let mut rates = V::zeros(self.model.ninputs(), NalgebraContext::new());
         let mut y = V::zeros(self.model.noutputs(), NalgebraContext::new());
 
-        for (index, event) in events.iter().enumerate() {
-            match event {
-                Event::Bolus(bolus) => {
-                    let input = bolus
-                        .input_index()
-                        .expect("prepared boluses carry a dense input index");
+        for (index, step) in schedule.steps.iter().enumerate() {
+            match *step {
+                Step::Bolus {
+                    time,
+                    input,
+                    amount,
+                } => {
                     for particle in &mut particles {
-                        self.model.bolus(
-                            &mut ws,
-                            event.time(),
-                            particle,
-                            p,
-                            covariates,
-                            input,
-                            bolus.amount(),
-                        )?;
+                        self.model
+                            .bolus(&mut ws, time, particle, p, covariates, input, amount)?;
                     }
                 }
                 // Infusions enter through the rates the drift receives.
-                Event::Infusion(_) => {}
-                Event::Observation(observation) => {
-                    fill_active_rates(&infusions, observation.time(), &mut rates);
-                    let outeq = observation
-                        .outeq_slot()
-                        .expect("prepared observations carry an output slot");
+                Step::Infusion(_) => {}
+                Step::Observation { observation, outeq } => {
+                    fill_active_rates(&schedule.infusions, observation.time(), &mut rates);
                     let first = run.predictions.len();
                     for particle in &particles {
                         y.fill(0.0);
@@ -232,14 +229,14 @@ impl<M: SdeModel> SDE<M> {
                 }
             }
 
-            if let Some(next_event) = events.get(index + 1) {
+            if let Some(next) = schedule.steps.get(index + 1) {
                 self.advance(
                     &mut particles,
                     p,
                     covariates,
-                    &infusions,
-                    event.time(),
-                    next_event.time(),
+                    &schedule.infusions,
+                    step.time(),
+                    next.time(),
                     run.streams.next_seed(),
                 )?;
             }
@@ -254,7 +251,7 @@ impl<M: SdeModel> SDE<M> {
         particles: &mut [V],
         p: &V,
         covariates: &Covariates,
-        infusions: &[Infusion],
+        infusions: &[InfusionDose],
         start: f64,
         end: f64,
         seed: u64,
@@ -304,24 +301,21 @@ impl<M: SdeModel> SDE<M> {
         parameters: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
-        let Some(cache) = &self.cache else {
-            return Ok(self
-                .simulate(subject, parameters, Some(error_models))?
-                .log_likelihood);
+        let simulate = || {
+            self.simulate(subject, parameters, Some(error_models))
+                .map(|run| run.log_likelihood)
         };
-        let key = (
-            mix(subject.hash(), self.seed),
-            parameters_hash(parameters),
-            error_models.hash(),
-        );
-        if let Some(cached) = cache.get(&key) {
-            return Ok(cached);
+        match &self.cache {
+            Some(cache) => {
+                let key = (
+                    mix(mix(subject.hash(), self.seed), self.nparticles as u64),
+                    parameters_hash(parameters),
+                    error_models.hash(),
+                );
+                cache.get_or_try_insert(key, simulate)
+            }
+            None => simulate(),
         }
-        let log_likelihood = self
-            .simulate(subject, parameters, Some(error_models))?
-            .log_likelihood;
-        cache.insert(key, log_likelihood);
-        Ok(log_likelihood)
     }
 }
 

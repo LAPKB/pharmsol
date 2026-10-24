@@ -402,6 +402,23 @@ fn handwritten_ode_estimate_predictions_uses_prediction_cache() {
 }
 
 #[test]
+fn clones_with_other_solver_settings_do_not_share_cache_entries() {
+    let ode = simple_ode();
+    let subject = route_policy_subject();
+    let parameters = [0.0];
+    let key = ode.prediction_key(&subject, &parameters);
+
+    let retuned = ode.clone().with_tolerances(1e-8, 1e-8);
+    assert_ne!(retuned.prediction_key(&subject, &parameters), key);
+
+    let resolved = ode
+        .clone()
+        .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+    assert_ne!(resolved.prediction_key(&subject, &parameters), key);
+    assert_eq!(ode.clone().prediction_key(&subject, &parameters), key);
+}
+
+#[test]
 fn ode_infusions_short_dose_conserved_after_infusion() {
     let subject = Subject::builder("short_infusion")
         .infusion(0.0, 100.0, "iv", 0.1)

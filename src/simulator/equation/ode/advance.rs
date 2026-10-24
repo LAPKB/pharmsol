@@ -7,6 +7,7 @@
 
 use super::closure::PMProblem;
 use super::*;
+use crate::simulator::equation::model::Step;
 
 fn checked_local_time(
     time_origin: f64,
@@ -35,8 +36,8 @@ fn checked_local_time(
 /// solver starts at local `t = 0` at the first resolved event. Schedule
 /// validation is absolute-time validation; a later time may need a coordinate
 /// shift before it is passed to diffsol.
-pub(crate) fn validate_resolved_ode_schedule(events: &[Event]) -> Result<f64, PharmsolError> {
-    let first_event_time = events.first().map(Event::time).unwrap_or(0.0);
+pub(crate) fn validate_resolved_ode_schedule(steps: &[Step]) -> Result<f64, PharmsolError> {
+    let first_event_time = steps.first().map(Step::time).unwrap_or(0.0);
     if !first_event_time.is_finite() {
         return Err(PharmsolError::OtherError(format!(
             "invalid ODE event schedule: first resolved event time {first_event_time:?} is not finite"
@@ -44,11 +45,11 @@ pub(crate) fn validate_resolved_ode_schedule(events: &[Event]) -> Result<f64, Ph
     }
     let time_origin = first_event_time;
 
-    let mut required_times = Vec::with_capacity(events.len() * 2);
+    let mut required_times = Vec::with_capacity(steps.len() * 2);
     let mut previous_event_time = None;
 
-    for (index, event) in events.iter().enumerate() {
-        let time = event.time();
+    for (index, step) in steps.iter().enumerate() {
+        let time = step.time();
         if !time.is_finite() {
             return Err(PharmsolError::OtherError(format!(
                 "invalid ODE event schedule: resolved event {index} has non-finite time {time:?}"
@@ -70,24 +71,23 @@ pub(crate) fn validate_resolved_ode_schedule(events: &[Event]) -> Result<f64, Ph
         previous_event_time = Some(time);
         required_times.push(time);
 
-        match event {
-            Event::Bolus(bolus) => {
-                if !bolus.amount().is_finite() {
+        match step {
+            Step::Bolus { amount, .. } => {
+                if !amount.is_finite() {
                     return Err(PharmsolError::OtherError(format!(
-                        "invalid ODE event schedule: bolus at t = {time:.16e} has non-finite amount {:?}",
-                        bolus.amount()
+                        "invalid ODE event schedule: bolus at t = {time:.16e} has non-finite amount {amount:?}"
                     )));
                 }
             }
-            Event::Infusion(infusion) => {
-                let amount = infusion.amount();
+            Step::Infusion(infusion) => {
+                let amount = infusion.amount;
                 if !amount.is_finite() {
                     return Err(PharmsolError::OtherError(format!(
                         "invalid ODE event schedule: infusion at t = {time:.16e} has non-finite amount {amount:?}"
                     )));
                 }
 
-                let duration = infusion.duration();
+                let duration = infusion.duration;
                 if !duration.is_finite() {
                     return Err(PharmsolError::OtherError(format!(
                         "invalid ODE event schedule: infusion at t = {time:.16e} has non-finite duration {duration:?}"
@@ -123,7 +123,7 @@ pub(crate) fn validate_resolved_ode_schedule(events: &[Event]) -> Result<f64, Ph
                 }
                 required_times.push(endpoint);
             }
-            Event::Observation(_) => {}
+            Step::Observation { .. } => {}
         }
     }
 
@@ -1107,8 +1107,18 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::simulator::equation::model::InfusionDose;
     use crate::simulator::M;
     use crate::Covariates;
+
+    fn infusion_step(amount: f64) -> Step<'static> {
+        Step::Infusion(InfusionDose {
+            time: 1.5,
+            duration: 2.0,
+            amount,
+            input: 0,
+        })
+    }
     use diffsol::{NalgebraContext, OdeBuilder};
 
     type GuardTestRhs = fn(&V, &V, f64, &mut V, &V, &V, &Covariates);
@@ -1140,7 +1150,7 @@ mod tests {
                     0,
                     V::zeros(0, NalgebraContext::new()),
                     &covariates,
-                    std::iter::empty::<&Infusion>(),
+                    &[],
                     V::zeros(1, NalgebraContext::new()),
                     0.0,
                 )
@@ -1165,7 +1175,7 @@ mod tests {
                         0,
                         V::zeros(0, NalgebraContext::new()),
                         &covariates,
-                        std::iter::empty::<&Infusion>(),
+                        &[],
                         V::zeros(1, NalgebraContext::new()),
                         0.0,
                     )
@@ -1568,7 +1578,7 @@ mod tests {
     #[test]
     fn resolved_schedule_rejects_positive_nonzero_infusion_rate_underflow() {
         let amount = f64::from_bits(1);
-        let events = [Event::Infusion(Infusion::new(1.5, amount, "0", 2.0, 0))];
+        let events = [infusion_step(amount)];
         let error = validate_resolved_ode_schedule(&events)
             .expect_err("positive nonzero infusion underflow must be rejected");
         let message = error.to_string();
@@ -1581,7 +1591,7 @@ mod tests {
     #[test]
     fn resolved_schedule_rejects_negative_nonzero_infusion_rate_underflow() {
         let amount = -f64::from_bits(1);
-        let events = [Event::Infusion(Infusion::new(1.5, amount, "0", 2.0, 0))];
+        let events = [infusion_step(amount)];
         let error = validate_resolved_ode_schedule(&events)
             .expect_err("negative nonzero infusion underflow must be rejected");
         let message = error.to_string();
@@ -1593,7 +1603,7 @@ mod tests {
 
     #[test]
     fn resolved_schedule_accepts_zero_amount_infusion_with_zero_rate() {
-        let events = [Event::Infusion(Infusion::new(1.5, 0.0, "0", 2.0, 0))];
+        let events = [infusion_step(0.0)];
         assert_eq!(
             validate_resolved_ode_schedule(&events).expect("zero amount is material-free"),
             1.5
@@ -1616,7 +1626,7 @@ mod tests {
                     0,
                     V::zeros(0, NalgebraContext::new()),
                     &covariates,
-                    std::iter::empty::<&Infusion>(),
+                    &[],
                     V::zeros(1, NalgebraContext::new()),
                     0.0,
                 )
@@ -1679,7 +1689,7 @@ mod tests {
                     0,
                     V::zeros(0, NalgebraContext::new()),
                     &covariates,
-                    std::iter::empty::<&Infusion>(),
+                    &[],
                     V::zeros(1, NalgebraContext::new()),
                     -192.0,
                 )
@@ -1730,7 +1740,7 @@ mod tests {
                     0,
                     V::zeros(0, NalgebraContext::new()),
                     &covariates,
-                    std::iter::empty::<&Infusion>(),
+                    &[],
                     V::zeros(1, NalgebraContext::new()),
                     -1.0e16,
                 )
@@ -1783,7 +1793,7 @@ mod tests {
                     0,
                     V::zeros(0, NalgebraContext::new()),
                     &covariates,
-                    std::iter::empty::<&Infusion>(),
+                    &[],
                     V::zeros(1, NalgebraContext::new()),
                     origin,
                 )
@@ -1832,7 +1842,7 @@ mod tests {
                     0,
                     V::zeros(0, NalgebraContext::new()),
                     &covariates,
-                    std::iter::empty::<&Infusion>(),
+                    &[],
                     V::zeros(1, NalgebraContext::new()),
                     0.0,
                 )

@@ -224,8 +224,16 @@ pub trait Equation: Clone + Send + Sync + 'static {
 /// Hash parameter vectors to a u64 for cache key generation.
 #[inline(always)]
 pub(crate) fn parameters_hash(parameters: &[f64]) -> u64 {
+    salted_parameters_hash(parameters, 0)
+}
+
+/// [`parameters_hash`] combined with `salt`, e.g. a hash of solver settings
+/// that change the result.
+#[inline(always)]
+pub(crate) fn salted_parameters_hash(parameters: &[f64], salt: u64) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = ahash::AHasher::default();
+    salt.hash(&mut hasher);
     for &value in parameters {
         // Normalize -0.0 to 0.0 for consistent hashing
         let bits = if value == 0.0 { 0u64 } else { value.to_bits() };

@@ -18,8 +18,8 @@ use crate::{
     data::Covariates,
     simulator::{
         equation::{
-            analytical::kernel_function, Analytical, AnalyticalModel, Cache, Model, OdeModel,
-            SdeModel, ODE, SDE,
+            analytical::kernel_function, Analytical, AnalyticalModel, Model, OdeModel, SdeModel,
+            ODE, SDE,
         },
         AnalyticalEq, V,
     },
@@ -61,9 +61,7 @@ fn sorted_dense_metadata<'a, T>(
     Ok(sorted)
 }
 
-fn sorted_state_metadata<'a>(
-    info: &'a RuntimeModelInfo,
-) -> Result<Vec<&'a RuntimeStateInfo>, PharmsolError> {
+fn sorted_state_metadata(info: &RuntimeModelInfo) -> Result<Vec<&RuntimeStateInfo>, PharmsolError> {
     if info.state_len == 0 {
         if info.states.is_empty() {
             return Ok(Vec::new());
@@ -905,13 +903,7 @@ impl SDE<JitModel> {
             .model()
             .with_info(info)
             .expect("compiled SDE metadata should stay valid after particle override");
-        let seed = self.seed();
-        let fresh = SDE::from_model(model, nparticles).with_seed(seed);
-        if self.cache_enabled() {
-            fresh
-        } else {
-            fresh.disable_cache()
-        }
+        self.with_model(model, nparticles)
     }
 
     /// Public names and buffer sizes of the compiled model.
@@ -1506,7 +1498,7 @@ mod tests {
         )
         .expect("analytical model builds")
         .with_cache_capacity(1);
-        // DummyArtifact panics if a session starts, so any real solve fails the test.
+        // DummyArtifact panics if a function is called, so any real solve fails the test.
         let subject = Subject::builder("runtime_cached_analytical").build();
         let support_point = [0.2, 20.0];
         let expected = SubjectPredictions::default();
@@ -1514,11 +1506,8 @@ mod tests {
             .prediction_cache()
             .expect("cache should be enabled")
             .insert(
-                (
-                    subject.hash(),
-                    crate::simulator::equation::parameters_hash(&support_point),
-                ),
-                expected.clone(),
+                model.prediction_key(&subject, &support_point),
+                std::sync::Arc::new(expected.clone()),
             );
 
         let dense = Equation::estimate_predictions(&model, &subject, &support_point)
@@ -1550,15 +1539,12 @@ mod tests {
         let parameters = Parameters::with_model(&compiled, std::iter::empty::<(&str, f64)>())
             .expect("empty parameter list should validate");
         let expected = SubjectPredictions::default();
-        let key = (
-            subject.hash(),
-            crate::simulator::equation::parameters_hash(parameters.as_slice()),
-        );
+        let key = model.prediction_key(&subject, &parameters);
 
         model
             .prediction_cache()
             .expect("cache should be enabled")
-            .insert(key, expected.clone());
+            .insert(key, std::sync::Arc::new(expected.clone()));
 
         let actual = compiled
             .estimate_predictions(&subject, &parameters)

@@ -1,4 +1,4 @@
-//! Cache mechanisms for [Equation]s
+//! Cache mechanisms for [Equation](crate::Equation)s
 //!
 //! This module provides lightweight cache wrappers that can be embedded
 //! directly in equation structs ([`ODE`], [`Analytical`], [`SDE`]).
@@ -19,6 +19,7 @@
 //! let ode = ODE::new(diffeq, lag, fa, init, out).disable_cache();
 //! ```
 
+use std::hash::Hash;
 use std::{fmt, sync::Arc};
 
 use quick_cache::sync::Cache;
@@ -28,42 +29,54 @@ use crate::simulator::likelihood::SubjectPredictions;
 /// Default maximum number of entries per cache.
 pub const DEFAULT_CACHE_SIZE: usize = 100_000;
 
-/// Cache key: (subject_hash, parameters_hash)
-// TODO: PredictionCache keys currently omit solver and tolerance settings.
-// Shallow clones share entries, so changing either after a prediction is cached
-// can reuse a stale entry; leave key/invalidation/configuration behavior unchanged
-// until that follow-up is designed.
+/// Cache key: (subject hash, parameters hash combined with solver settings)
 pub(crate) type PredictionKey = (u64, u64);
 
-/// Cache key for SDE: (subject_hash, parameters_hash, error_model_hash)
+/// Cache key for SDE: (subject hash combined with seed and particle count,
+/// parameters hash, error-model hash)
 pub(crate) type SdeKey = (u64, u64, u64);
 
-/// Thread-safe bounded cache for subject predictions.
-///
-/// Used by [`ODE`](crate::ODE) and [`Analytical`](crate::simulator::equation::Analytical)
-/// to avoid recomputing predictions for the same (subject, parameters) pair.
+/// Thread-safe bounded cache of simulation results.
 ///
 /// `Clone` produces a shallow clone that shares the same underlying cache data,
 /// so cloned equations share cache hits.
-#[derive(Clone)]
-pub struct PredictionCache(Arc<Cache<PredictionKey, SubjectPredictions>>);
+pub struct SimulationCache<K, V>(Arc<Cache<K, V>>);
 
-impl PredictionCache {
-    /// Create a new prediction cache with a given maximum number of entries.
+/// Subject predictions of [`ODE`](crate::ODE) and
+/// [`Analytical`](crate::simulator::equation::Analytical) models.
+pub type PredictionCache = SimulationCache<PredictionKey, Arc<SubjectPredictions>>;
+
+/// Particle-filter log-likelihoods of [`SDE`](crate::SDE) models.
+pub type SdeLikelihoodCache = SimulationCache<SdeKey, f64>;
+
+impl<K: Eq + Hash + Clone, V: Clone> SimulationCache<K, V> {
+    /// Create a cache with a given maximum number of entries.
     pub fn new(size: usize) -> Self {
         Self(Arc::new(Cache::new(size)))
     }
 
-    /// Look up a cached prediction.
+    /// Look up a cached value.
     #[inline]
-    pub fn get(&self, key: &PredictionKey) -> Option<SubjectPredictions> {
+    pub fn get(&self, key: &K) -> Option<V> {
         self.0.get(key)
     }
 
-    /// Insert a prediction into the cache.
+    /// Insert a value into the cache.
     #[inline]
-    pub fn insert(&self, key: PredictionKey, value: SubjectPredictions) {
+    pub fn insert(&self, key: K, value: V) {
         self.0.insert(key, value);
+    }
+
+    /// Return the cached value, or compute and cache it.
+    ///
+    /// Concurrent callers missing on the same key wait for one computation.
+    /// Errors are returned and not cached.
+    pub fn get_or_try_insert<E>(
+        &self,
+        key: K,
+        compute: impl FnOnce() -> Result<V, E>,
+    ) -> Result<V, E> {
+        self.0.get_or_insert_with(&key, compute)
     }
 
     /// Remove all entries from the cache.
@@ -77,59 +90,15 @@ impl PredictionCache {
     }
 }
 
-impl fmt::Debug for PredictionCache {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("PredictionCache")
-            .field("entry_count", &self.entry_count())
-            .finish()
+impl<K, V> Clone for SimulationCache<K, V> {
+    fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
     }
 }
 
-/// Cache for SDE likelihood values.
-///
-/// SDEs do not produce subject predictions that can be cached, but
-/// the likelihood values for a given subject and parameters can still be cached.
-///
-/// Note that the use of a cache could be counterproductive for SDEs, as this removes the
-/// stochastic nature of the likelihood evaluation. However, it can be useful for
-/// producing a deterministic likelihood for an otherwise stochastic process.
-///
-/// `Clone` produces a shallow clone that shares the same underlying cache data.
-#[derive(Clone)]
-pub struct SdeLikelihoodCache(Arc<Cache<SdeKey, f64>>);
-
-impl SdeLikelihoodCache {
-    /// Create a new SDE likelihood cache with the given maximum number of entries.
-    pub fn new(size: usize) -> Self {
-        Self(Arc::new(Cache::new(size)))
-    }
-
-    /// Look up a cached likelihood value.
-    #[inline]
-    pub fn get(&self, key: &SdeKey) -> Option<f64> {
-        self.0.get(key)
-    }
-
-    /// Insert a likelihood value into the cache.
-    #[inline]
-    pub fn insert(&self, key: SdeKey, value: f64) {
-        self.0.insert(key, value);
-    }
-
-    /// Remove all entries from the cache.
-    pub fn invalidate_all(&self) {
-        self.0.clear();
-    }
-
-    /// Return the number of entries currently in the cache.
-    pub fn entry_count(&self) -> usize {
-        self.0.len()
-    }
-}
-
-impl fmt::Debug for SdeLikelihoodCache {
+impl<K: Eq + Hash + Clone, V: Clone> fmt::Debug for SimulationCache<K, V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SdeLikelihoodCache")
+        f.debug_struct("SimulationCache")
             .field("entry_count", &self.entry_count())
             .finish()
     }
@@ -149,8 +118,8 @@ mod tests {
     fn prediction_cache_hit_returns_value() {
         let cache = PredictionCache::new(10);
         let key: PredictionKey = (42, 99);
-        let preds = SubjectPredictions::default();
-        cache.insert(key, preds.clone());
+        let preds = Arc::new(SubjectPredictions::default());
+        cache.insert(key, preds);
         assert!(cache.get(&key).is_some());
     }
 
@@ -158,16 +127,16 @@ mod tests {
     fn prediction_cache_entry_count() {
         let cache = PredictionCache::new(10);
         assert_eq!(cache.entry_count(), 0);
-        cache.insert((1, 1), SubjectPredictions::default());
-        cache.insert((2, 2), SubjectPredictions::default());
+        cache.insert((1, 1), Arc::new(SubjectPredictions::default()));
+        cache.insert((2, 2), Arc::new(SubjectPredictions::default()));
         assert_eq!(cache.entry_count(), 2);
     }
 
     #[test]
     fn prediction_cache_invalidate_all_clears_entries() {
         let cache = PredictionCache::new(10);
-        cache.insert((1, 1), SubjectPredictions::default());
-        cache.insert((2, 2), SubjectPredictions::default());
+        cache.insert((1, 1), Arc::new(SubjectPredictions::default()));
+        cache.insert((2, 2), Arc::new(SubjectPredictions::default()));
         assert_eq!(cache.entry_count(), 2);
 
         cache.invalidate_all();
@@ -179,20 +148,20 @@ mod tests {
     fn prediction_cache_overwrite_same_key() {
         let cache = PredictionCache::new(10);
         let key: PredictionKey = (1, 1);
-        cache.insert(key, SubjectPredictions::default());
-        cache.insert(key, SubjectPredictions::default());
+        cache.insert(key, Arc::new(SubjectPredictions::default()));
+        cache.insert(key, Arc::new(SubjectPredictions::default()));
         assert_eq!(cache.entry_count(), 1);
     }
 
     #[test]
     fn prediction_cache_clone_shares_data() {
         let cache = PredictionCache::new(10);
-        cache.insert((1, 1), SubjectPredictions::default());
+        cache.insert((1, 1), Arc::new(SubjectPredictions::default()));
         let clone = cache.clone();
         // Clone sees existing entry
         assert!(clone.get(&(1, 1)).is_some());
         // Insert via clone is visible through original
-        clone.insert((2, 2), SubjectPredictions::default());
+        clone.insert((2, 2), Arc::new(SubjectPredictions::default()));
         assert!(cache.get(&(2, 2)).is_some());
     }
 
@@ -200,7 +169,7 @@ mod tests {
     fn prediction_cache_debug_format() {
         let cache = PredictionCache::new(10);
         let dbg = format!("{:?}", cache);
-        assert!(dbg.contains("PredictionCache"));
+        assert!(dbg.contains("SimulationCache"));
         assert!(dbg.contains("entry_count"));
     }
 
@@ -262,7 +231,26 @@ mod tests {
     fn sde_cache_debug_format() {
         let cache = SdeLikelihoodCache::new(10);
         let dbg = format!("{:?}", cache);
-        assert!(dbg.contains("SdeLikelihoodCache"));
+        assert!(dbg.contains("SimulationCache"));
         assert!(dbg.contains("entry_count"));
+    }
+}
+
+#[cfg(test)]
+mod get_or_try_insert_tests {
+    use super::*;
+
+    #[test]
+    fn computes_once_and_does_not_cache_errors() {
+        let cache = SdeLikelihoodCache::new(10);
+        let failed: Result<f64, &str> = cache.get_or_try_insert((1, 1, 1), || Err("boom"));
+        assert!(failed.is_err());
+        assert_eq!(cache.entry_count(), 0);
+
+        let first: Result<f64, &str> = cache.get_or_try_insert((1, 1, 1), || Ok(3.0));
+        let second: Result<f64, &str> =
+            cache.get_or_try_insert((1, 1, 1), || panic!("should be cached"));
+        assert_eq!(first, Ok(3.0));
+        assert_eq!(second, Ok(3.0));
     }
 }

@@ -21,16 +21,20 @@ pub use three_compartment_models::*;
 pub use two_compartment_cl_models::*;
 pub use two_compartment_models::*;
 
+use std::sync::Arc;
+
 use diffsol::{NalgebraContext, Vector, VectorHost};
 use pharmsol_dsl::AnalyticalKernel;
 
-use super::model::{fill_active_rates, infusions, prepare_occasion, with_subject_context, Model};
-use super::{parameters_hash, Cache, Equation, ValidatedModelMetadata};
+use super::model::{
+    fill_active_rates, prepare_occasion, with_subject_context, InfusionDose, Model, Step,
+};
+use super::{salted_parameters_hash, Cache, Equation, ValidatedModelMetadata};
 use crate::data::error_model::AssayErrorModels;
 use crate::prelude::simulator::SubjectPredictions;
-use crate::simulator::cache::{PredictionCache, DEFAULT_CACHE_SIZE};
+use crate::simulator::cache::{PredictionCache, PredictionKey, DEFAULT_CACHE_SIZE};
 use crate::simulator::{AnalyticalEq, T, V};
-use crate::{data::Covariates, Event, Infusion, Occasion, PharmsolError, Subject};
+use crate::{data::Covariates, Occasion, PharmsolError, Subject};
 
 /// Model functions for an [`Analytical`] equation.
 pub trait AnalyticalModel: Model {
@@ -75,7 +79,7 @@ impl<M: AnalyticalModel> Analytical<M> {
         &self.model
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "dsl"))]
     pub(crate) fn prediction_cache(&self) -> Option<&PredictionCache> {
         self.cache.as_ref()
     }
@@ -97,17 +101,18 @@ impl<M: AnalyticalModel> Analytical<M> {
         &self,
         subject: &Subject,
         parameters: &[f64],
-    ) -> Result<SubjectPredictions, PharmsolError> {
-        let Some(cache) = &self.cache else {
-            return self.simulate(subject, parameters);
-        };
-        let key = (subject.hash(), parameters_hash(parameters));
-        if let Some(cached) = cache.get(&key) {
-            return Ok(cached);
+    ) -> Result<Arc<SubjectPredictions>, PharmsolError> {
+        let simulate = || self.simulate(subject, parameters).map(Arc::new);
+        match &self.cache {
+            Some(cache) => {
+                cache.get_or_try_insert(self.prediction_key(subject, parameters), simulate)
+            }
+            None => simulate(),
         }
-        let predictions = self.simulate(subject, parameters)?;
-        cache.insert(key, predictions.clone());
-        Ok(predictions)
+    }
+
+    pub(crate) fn prediction_key(&self, subject: &Subject, parameters: &[f64]) -> PredictionKey {
+        (subject.hash(), salted_parameters_hash(parameters, 0))
     }
 
     fn simulate(
@@ -139,31 +144,24 @@ impl<M: AnalyticalModel> Analytical<M> {
     ) -> Result<(), PharmsolError> {
         let covariates = occasion.covariates();
         let mut ws = self.model.workspace();
-        let events = prepare_occasion(&self.model, &mut ws, occasion, p)?;
-        let infusions = infusions(&events);
+        let schedule = prepare_occasion(&self.model, &mut ws, occasion, p)?;
         let mut x = V::zeros(self.model.nstates(), NalgebraContext::new());
         self.model.init(&mut ws, 0.0, p, covariates, &mut x)?;
 
-        for (index, event) in events.iter().enumerate() {
-            match event {
-                Event::Bolus(bolus) => {
-                    let input = bolus
-                        .input_index()
-                        .expect("prepared boluses carry a dense input index");
-                    self.model.bolus(
-                        &mut ws,
-                        event.time(),
-                        &mut x,
-                        p,
-                        covariates,
-                        input,
-                        bolus.amount(),
-                    )?;
+        for (index, step) in schedule.steps.iter().enumerate() {
+            match *step {
+                Step::Bolus {
+                    time,
+                    input,
+                    amount,
+                } => {
+                    self.model
+                        .bolus(&mut ws, time, &mut x, p, covariates, input, amount)?;
                 }
                 // Infusions enter through the rates of each step.
-                Event::Infusion(_) => {}
-                Event::Observation(observation) => {
-                    fill_active_rates(&infusions, observation.time(), &mut scratch.rates);
+                Step::Infusion(_) => {}
+                Step::Observation { observation, outeq } => {
+                    fill_active_rates(&schedule.infusions, observation.time(), &mut scratch.rates);
                     scratch.y.fill(0.0);
                     self.model.outputs(
                         &mut ws,
@@ -174,24 +172,21 @@ impl<M: AnalyticalModel> Analytical<M> {
                         &scratch.rates,
                         &mut scratch.y,
                     )?;
-                    let outeq = observation
-                        .outeq_slot()
-                        .expect("prepared observations carry an output slot");
                     output.add_prediction(
                         observation.to_prediction(scratch.y[outeq], x.as_slice().to_vec()),
                     );
                 }
             }
 
-            if let Some(next_event) = events.get(index + 1) {
+            if let Some(next) = schedule.steps.get(index + 1) {
                 self.advance(
                     &mut ws,
                     &mut x,
                     p,
                     covariates,
-                    &infusions,
-                    event.time(),
-                    next_event.time(),
+                    &schedule.infusions,
+                    step.time(),
+                    next.time(),
                     scratch,
                 )?;
             }
@@ -207,7 +202,7 @@ impl<M: AnalyticalModel> Analytical<M> {
         x: &mut V,
         p: &V,
         covariates: &Covariates,
-        infusions: &[Infusion],
+        infusions: &[InfusionDose],
         start: f64,
         end: f64,
         scratch: &mut Scratch,
@@ -218,8 +213,8 @@ impl<M: AnalyticalModel> Analytical<M> {
 
         let mut breakpoints = vec![start, end];
         for infusion in infusions {
-            let begin = infusion.time();
-            let finish = begin + infusion.duration();
+            let begin = infusion.time;
+            let finish = infusion.end();
             if begin > start && begin < end {
                 breakpoints.push(begin);
             }
@@ -249,15 +244,12 @@ impl<M: AnalyticalModel> Analytical<M> {
 }
 
 /// Fill `rates` with the infusions that run for the whole segment `[from, to]`.
-fn fill_segment_rates(infusions: &[Infusion], from: f64, to: f64, rates: &mut V) {
+fn fill_segment_rates(infusions: &[InfusionDose], from: f64, to: f64, rates: &mut V) {
     let rates = rates.as_mut_slice();
     rates.fill(0.0);
     for infusion in infusions {
-        let input = infusion
-            .input_index()
-            .expect("prepared infusions carry a dense input index");
-        if from >= infusion.time() && to <= infusion.time() + infusion.duration() {
-            rates[input] += infusion.amount() / infusion.duration();
+        if from >= infusion.time && to <= infusion.end() {
+            rates[infusion.input] += infusion.rate();
         }
     }
 }
@@ -327,6 +319,7 @@ impl<M: AnalyticalModel> Equation for Analytical<M> {
         parameters: &[f64],
     ) -> Result<SubjectPredictions, PharmsolError> {
         self.predictions(subject, parameters)
+            .map(Arc::unwrap_or_clone)
     }
 
     fn estimate_log_likelihood(

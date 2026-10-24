@@ -11,7 +11,8 @@ mod native;
 pub(crate) use advance::{advance_solver_to_event, validate_resolved_ode_schedule};
 pub use native::{NativeOde, NativeOdeWorkspace};
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::sync::Arc;
 
 use diffsol::{
     error::OdeSolverError, ode_solver::method::OdeSolverMethod, NalgebraContext, NalgebraLU,
@@ -19,16 +20,18 @@ use diffsol::{
 };
 
 use crate::{
-    data::{Covariates, Infusion},
+    data::Covariates,
     error_model::AssayErrorModels,
     prelude::simulator::SubjectPredictions,
     simulator::{M as Matrix, V},
-    Event, Occasion, PharmsolError, Subject,
+    Occasion, PharmsolError, Subject,
 };
 
-use super::model::{fill_active_rates, infusions, prepare_occasion, with_subject_context, Model};
-use super::{parameters_hash, Cache, Equation, ValidatedModelMetadata};
-use crate::simulator::cache::{PredictionCache, DEFAULT_CACHE_SIZE};
+use super::model::{
+    fill_active_rates, prepare_occasion, with_subject_context, InfusionDose, Model, Step,
+};
+use super::{salted_parameters_hash, Cache, Equation, ValidatedModelMetadata};
+use crate::simulator::cache::{PredictionCache, PredictionKey, DEFAULT_CACHE_SIZE};
 use closure::PMProblem;
 
 const RTOL: f64 = 1e-4;
@@ -168,7 +171,7 @@ impl<M: OdeModel> ODE<M> {
         &self.model
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "dsl"))]
     pub(crate) fn prediction_cache(&self) -> Option<&PredictionCache> {
         self.cache.as_ref()
     }
@@ -203,17 +206,33 @@ impl<M: OdeModel> ODE<M> {
         &self,
         subject: &Subject,
         parameters: &[f64],
-    ) -> Result<SubjectPredictions, PharmsolError> {
-        let Some(cache) = &self.cache else {
-            return self.simulate(subject, parameters);
-        };
-        let key = (subject.hash(), parameters_hash(parameters));
-        if let Some(cached) = cache.get(&key) {
-            return Ok(cached);
+    ) -> Result<Arc<SubjectPredictions>, PharmsolError> {
+        let simulate = || self.simulate(subject, parameters).map(Arc::new);
+        match &self.cache {
+            Some(cache) => {
+                cache.get_or_try_insert(self.prediction_key(subject, parameters), simulate)
+            }
+            None => simulate(),
         }
-        let predictions = self.simulate(subject, parameters)?;
-        cache.insert(key, predictions.clone());
-        Ok(predictions)
+    }
+
+    pub(crate) fn prediction_key(&self, subject: &Subject, parameters: &[f64]) -> PredictionKey {
+        (
+            subject.hash(),
+            salted_parameters_hash(parameters, self.settings_salt()),
+        )
+    }
+
+    /// Hash of the settings that change predictions, so clones with
+    /// different settings never share cache entries.
+    fn settings_salt(&self) -> u64 {
+        let solver = match self.solver {
+            OdeSolver::Bdf => 1,
+            OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45) => 2,
+            OdeSolver::Sdirk(SdirkTableau::TrBdf2) => 3,
+            OdeSolver::Sdirk(SdirkTableau::Esdirk34) => 4,
+        };
+        salted_parameters_hash(&[self.rtol, self.atol], solver)
     }
 
     fn simulate(
@@ -247,19 +266,16 @@ impl<M: OdeModel> ODE<M> {
         covariates.validate_for_ode()?;
 
         let mut ws = self.model.workspace();
-        let events = prepare_occasion(&self.model, &mut ws, occasion, p)?;
-        let time_origin = validate_resolved_ode_schedule(&events)?;
-        let infusions = infusions(&events);
+        let schedule = prepare_occasion(&self.model, &mut ws, occasion, p)?;
+        let time_origin = validate_resolved_ode_schedule(&schedule.steps)?;
         let mut x0 = V::zeros(self.model.nstates(), NalgebraContext::new());
         self.model
             .init(&mut ws, time_origin, p, covariates, &mut x0)?;
 
-        // diffsol cannot propagate errors out of the RHS, so a failure is
-        // parked here and surfaced at the next stop.
         let ws = RefCell::new(ws);
-        let rhs_error = RefCell::new(None);
+        let rhs_error = RhsError::default();
         let rhs = |x: &V, p: &V, t: f64, dx: &mut V, _bolus: &V, rates: &V, cov: &Covariates| {
-            if rhs_error.borrow().is_some() {
+            if rhs_error.is_set() {
                 dx.fill(0.0);
                 return;
             }
@@ -268,7 +284,7 @@ impl<M: OdeModel> ODE<M> {
                 .rhs(&mut ws.borrow_mut(), t, x, p, cov, rates, dx)
             {
                 dx.fill(0.0);
-                *rhs_error.borrow_mut() = Some(error);
+                rhs_error.set(error);
             }
         };
 
@@ -284,7 +300,7 @@ impl<M: OdeModel> ODE<M> {
                 self.model.ninputs(),
                 p.clone(),
                 covariates,
-                infusions.iter(),
+                &schedule.infusions,
                 x0,
                 time_origin,
             )?)?;
@@ -293,8 +309,8 @@ impl<M: OdeModel> ODE<M> {
             .configure_explicit_step_guard(accepted_step_limits_for_solver(&self.solver));
 
         let run = OccasionRun {
-            events: &events,
-            infusions: &infusions,
+            steps: &schedule.steps,
+            infusions: &schedule.infusions,
             p,
             covariates,
             ws: &ws,
@@ -324,8 +340,7 @@ impl<M: OdeModel> ODE<M> {
             ),
         }?;
 
-        let error = rhs_error.borrow_mut().take();
-        error.map_or(Ok(()), Err)
+        rhs_error.take()
     }
 
     /// Walk the events of one occasion, integrating between them.
@@ -340,10 +355,6 @@ impl<M: OdeModel> ODE<M> {
         F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
         S: OdeSolverMethod<'a, PMProblem<'a, F>>,
     {
-        let take_rhs_error = || match run.rhs_error.borrow_mut().take() {
-            Some(error) => Err(error),
-            None => Ok(()),
-        };
         let mut integration_boundary_cursor = 0usize;
         // Set when the previous event changed the state or the previous stop
         // was a discontinuity boundary: the solver must be restarted before the
@@ -352,27 +363,28 @@ impl<M: OdeModel> ODE<M> {
         // restart for a zero-length segment.
         let mut pending_reinit = false;
 
-        for (index, event) in run.events.iter().enumerate() {
-            match event {
-                Event::Bolus(bolus) => {
-                    let input = bolus
-                        .input_index()
-                        .expect("prepared boluses carry a dense input index");
+        for (index, step) in run.steps.iter().enumerate() {
+            match *step {
+                Step::Bolus {
+                    time,
+                    input,
+                    amount,
+                } => {
                     self.model.bolus(
                         &mut run.ws.borrow_mut(),
-                        event.time(),
+                        time,
                         solver.state_mut().y,
                         run.p,
                         run.covariates,
                         input,
-                        bolus.amount(),
+                        amount,
                     )?;
                     pending_reinit = true;
                 }
                 // Infusions enter through the rates the RHS receives.
-                Event::Infusion(_) => {}
-                Event::Observation(observation) => {
-                    take_rhs_error()?;
+                Step::Infusion(_) => {}
+                Step::Observation { observation, outeq } => {
+                    run.rhs_error.take()?;
                     fill_active_rates(run.infusions, observation.time(), &mut scratch.rates);
                     scratch.y.fill(0.0);
                     self.model.outputs(
@@ -384,9 +396,6 @@ impl<M: OdeModel> ODE<M> {
                         &scratch.rates,
                         &mut scratch.y,
                     )?;
-                    let outeq = observation
-                        .outeq_slot()
-                        .expect("prepared observations carry an output slot");
                     output.add_prediction(
                         observation
                             .to_prediction(scratch.y[outeq], solver.state().y.as_slice().to_vec()),
@@ -394,16 +403,16 @@ impl<M: OdeModel> ODE<M> {
                 }
             }
 
-            if let Some(next_event) = run.events.get(index + 1) {
+            if let Some(next) = run.steps.get(index + 1) {
                 advance_solver_to_event(
                     solver,
-                    next_event.time(),
+                    next.time(),
                     &mut integration_boundary_cursor,
                     &mut pending_reinit,
                     &mut scratch.dy,
                     self.rtol,
                     self.atol,
-                    &mut || take_rhs_error(),
+                    &mut || run.rhs_error.take(),
                 )?;
             }
         }
@@ -413,12 +422,44 @@ impl<M: OdeModel> ODE<M> {
 
 /// Everything [`ODE::run_events`] needs about the occasion being solved.
 struct OccasionRun<'a, M: Model> {
-    events: &'a [Event],
-    infusions: &'a [Infusion],
+    steps: &'a [Step<'a>],
+    infusions: &'a [InfusionDose],
     p: &'a V,
     covariates: &'a Covariates,
     ws: &'a RefCell<M::Workspace>,
-    rhs_error: &'a RefCell<Option<PharmsolError>>,
+    rhs_error: &'a RhsError,
+}
+
+/// The first error raised inside the RHS.
+///
+/// diffsol cannot propagate errors out of the RHS, so a failure is parked
+/// here (the RHS returns zeros from then on) and surfaced at the next stop.
+#[derive(Default)]
+struct RhsError {
+    is_set: Cell<bool>,
+    error: RefCell<Option<PharmsolError>>,
+}
+
+impl RhsError {
+    fn is_set(&self) -> bool {
+        self.is_set.get()
+    }
+
+    fn set(&self, error: PharmsolError) {
+        self.is_set.set(true);
+        *self.error.borrow_mut() = Some(error);
+    }
+
+    /// Surface the parked error, if any, and clear it.
+    fn take(&self) -> Result<(), PharmsolError> {
+        if !self.is_set.replace(false) {
+            return Ok(());
+        }
+        match self.error.borrow_mut().take() {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
 }
 
 /// Buffers reused across a subject's occasions.
@@ -486,6 +527,7 @@ impl<M: OdeModel> Equation for ODE<M> {
         parameters: &[f64],
     ) -> Result<SubjectPredictions, PharmsolError> {
         self.predictions(subject, parameters)
+            .map(Arc::unwrap_or_clone)
     }
 
     fn estimate_log_likelihood(
