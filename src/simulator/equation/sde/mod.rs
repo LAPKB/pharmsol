@@ -1,324 +1,455 @@
+//! Stochastic models simulated with particles.
+//!
+//! [`SDE`] pairs an [`SdeModel`] with a particle count, a random seed and a
+//! likelihood cache. Between events every particle is advanced with adaptive
+//! Euler-Maruyama steps. At each observation the particles are weighted by
+//! the observation's likelihood and resampled (a bootstrap particle filter).
+//!
+//! Simulation is deterministic: the random streams depend only on the seed,
+//! the subject and the event being simulated, never on the parameters. Two
+//! support points are therefore compared under the same noise, and repeated
+//! calls return the same result.
+
 mod em;
+mod native;
 
-use diffsol::{NalgebraContext, Vector};
-use nalgebra::DVector;
-use ndarray::{concatenate, Array2, Axis};
-use pharmsol_dsl::ModelKind;
-use rand::{rng, RngExt};
+pub use native::NativeSde;
+
+use diffsol::{NalgebraContext, Vector, VectorHost};
+use ndarray::Array2;
+use rand::rngs::StdRng;
+use rand::{RngExt, SeedableRng};
 use rayon::prelude::*;
-use thiserror::Error;
 
-use crate::{
-    data::{Covariates, Infusion},
-    error_model::AssayErrorModels,
-    prelude::simulator::Prediction,
-    simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
-    Subject,
-};
+use em::EmScratch;
 
-use super::parameters_hash;
+use super::model::{fill_active_rates, infusions, prepare_occasion, with_subject_context, Model};
+use super::{parameters_hash, Cache, Equation, Predictions, ValidatedModelMetadata};
+use crate::data::error_model::AssayErrorModels;
+use crate::prelude::simulator::Prediction;
 use crate::simulator::cache::{SdeLikelihoodCache, DEFAULT_CACHE_SIZE};
+use crate::simulator::V;
+use crate::{Covariates, Event, Infusion, Occasion, PharmsolError, Subject};
 
-use diffsol::VectorCommon;
+/// Model functions for an [`SDE`].
+pub trait SdeModel: Model {
+    /// Write the drift of `x` at `time` into `dx`, which is zeroed on entry.
+    #[allow(clippy::too_many_arguments)]
+    fn drift(
+        &self,
+        ws: &mut Self::Workspace,
+        time: f64,
+        x: &V,
+        p: &V,
+        cov: &Covariates,
+        rates: &V,
+        dx: &mut V,
+    ) -> Result<(), PharmsolError>;
 
-use crate::PharmsolError;
-
-use super::{
-    simulate_events, Equation, EquationPriv, ModelMetadata, ModelMetadataError, Predictions,
-    ValidatedModelMetadata,
-};
-
-#[derive(Clone, Debug, PartialEq, Eq, Error)]
-pub enum SdeMetadataError {
-    #[error(transparent)]
-    Validation(#[from] ModelMetadataError),
-    #[error("SDE declares {declared} state metadata entries but model has {expected} states")]
-    StateCountMismatch { expected: usize, declared: usize },
-    #[error("SDE declares {declared} route metadata entries but model has {expected} inputs")]
-    RouteCountMismatch { expected: usize, declared: usize },
-    #[error("SDE declares {declared} output metadata entries but model has {expected} outputs")]
-    OutputCountMismatch { expected: usize, declared: usize },
+    /// Write the diffusion of each state at `time` into `sigma`, which is
+    /// zeroed on entry. Each state receives independent noise.
+    #[allow(clippy::too_many_arguments)]
+    fn diffusion(
+        &self,
+        ws: &mut Self::Workspace,
+        time: f64,
+        x: &V,
+        p: &V,
+        cov: &Covariates,
+        rates: &V,
+        sigma: &mut V,
+    ) -> Result<(), PharmsolError>;
 }
 
-#[derive(Clone, Debug, Default)]
-struct InjectedBolusMappings {
-    destinations: Vec<Option<usize>>,
-}
-
-impl InjectedBolusMappings {
-    fn explicit(ndrugs: usize) -> Self {
-        Self {
-            destinations: vec![None; ndrugs],
-        }
-    }
-
-    fn from_destinations(ndrugs: usize, destinations: &[Option<usize>]) -> Self {
-        let mut mappings = Self::explicit(ndrugs);
-        for (input, destination) in destinations.iter().copied().take(ndrugs).enumerate() {
-            mappings.destinations[input] = destination;
-        }
-        mappings
-    }
-
-    fn invalidate_for_ndrugs(&mut self, ndrugs: usize) {
-        *self = Self::explicit(ndrugs);
-    }
-
-    fn apply(&self, state: &mut [DVector<f64>], input: usize, amount: f64) -> bool {
-        let Some(destination) = self.destinations.get(input).copied().flatten() else {
-            return false;
-        };
-        state.par_iter_mut().for_each(|particle| {
-            particle[destination] += amount;
-        });
-        true
-    }
-}
-
-/// Simulate a stochastic differential equation (SDE) event.
+/// An [`SdeModel`] simulated with particles, with a likelihood cache.
 ///
-/// This function advances the SDE system from time `ti` to `tf` using
-/// the Euler-Maruyama method implemented in the `em` module.
-///
-/// # Arguments
-///
-/// * `drift` - Function defining the deterministic component of the SDE
-/// * `difussion` - Function defining the stochastic component of the SDE
-/// * `x` - Current state vector
-/// * `parameters` - Parameter vector for the model
-/// * `cov` - Covariates that may influence the system dynamics
-/// * `infusions` - Infusion events to be applied during simulation
-/// * `ti` - Starting time
-/// * `tf` - Ending time
-///
-/// # Returns
-///
-/// The state vector at time `tf` after simulation.
-#[inline(always)]
-#[allow(clippy::too_many_arguments)]
-fn simulate_sde_event(
-    drift: &Drift,
-    difussion: &Diffusion,
-    x: V,
-    parameters: &[f64],
-    cov: &Covariates,
-    infusions: &[Infusion],
-    ndrugs: usize,
-    ti: f64,
-    tf: f64,
-) -> V {
-    if ti == tf {
-        return x;
-    }
-
-    let parameters_v = V::from_vec(parameters.to_vec(), NalgebraContext::new());
-    let covariates = cov.clone();
-    let infusion_events = infusions.to_vec();
-    let drift_fn = *drift;
-    let diffusion_fn = *difussion;
-
-    let parameters_for_drift = parameters_v.clone();
-    let drift_closure = move |time: f64, state: &DVector<f64>, out: &mut DVector<f64>| {
-        let mut rateiv = V::zeros(ndrugs, NalgebraContext::new());
-        for infusion in &infusion_events {
-            if time >= infusion.time() && time <= infusion.duration() + infusion.time() {
-                let input = infusion
-                    .input_index()
-                    .expect("resolved infusions should use numeric input labels");
-                rateiv[input] += infusion.amount() / infusion.duration();
-            }
-        }
-
-        let state_v: V = state.clone().into();
-        let mut out_v = V::zeros(state.len(), NalgebraContext::new());
-        drift_fn(
-            &state_v,
-            &parameters_for_drift,
-            time,
-            &mut out_v,
-            &rateiv,
-            &covariates,
-        );
-        out.copy_from(out_v.inner());
-    };
-
-    let diffusion_closure = move |_time: f64, _state: &DVector<f64>, out: &mut DVector<f64>| {
-        let mut out_v = V::zeros(out.len(), NalgebraContext::new());
-        diffusion_fn(&parameters_v, &mut out_v);
-        out.copy_from(out_v.inner());
-    };
-
-    simulate_sde_event_with(drift_closure, diffusion_closure, x.inner().clone(), ti, tf).into()
-}
-
-pub(crate) fn simulate_sde_event_with<D, G>(
-    drift: D,
-    diffusion: G,
-    initial_state: DVector<f64>,
-    ti: f64,
-    tf: f64,
-) -> DVector<f64>
-where
-    D: Fn(f64, &DVector<f64>, &mut DVector<f64>),
-    G: Fn(f64, &DVector<f64>, &mut DVector<f64>),
-{
-    if ti == tf {
-        return initial_state;
-    }
-
-    let mut sde = em::EM::new(drift, diffusion, initial_state, 1e-2, 1e-2);
-    let (_time, solution) = sde.solve(ti, tf);
-    solution.last().unwrap().clone()
-}
-
-/// Stochastic Differential Equation solver for pharmacometric models.
-///
-/// This struct represents a stochastic differential equation system and provides
-/// methods to simulate particles and estimate likelihood for PKPD modeling.
-///
-/// SDE models introduce stochasticity into the system dynamics, allowing for more
-/// realistic modeling of biological variability and uncertainty.
+/// Caching is on by default; see [`Cache`]. Clones share the cache.
 #[derive(Clone, Debug)]
-pub struct SDE {
-    drift: Drift,
-    diffusion: Diffusion,
-    lag: Lag,
-    fa: Fa,
-    init: Init,
-    out: Out,
-    neqs: Neqs,
+pub struct SDE<M = NativeSde> {
+    model: M,
     nparticles: usize,
-    metadata: Option<ValidatedModelMetadata>,
-    injected_bolus_mappings: InjectedBolusMappings,
+    seed: u64,
     cache: Option<SdeLikelihoodCache>,
 }
 
-impl SDE {
-    /// Creates a new stochastic differential equation solver with default Neqs.
-    ///
-    /// Use builder methods to configure dimensions:
-    /// ```ignore
-    /// SDE::new(drift, diffusion, lag, fa, init, out, nparticles)
-    ///     .with_nstates(2)
-    ///     .with_ndrugs(1)
-    ///     .with_nout(1)
-    /// ```
-    pub fn new(
-        drift: Drift,
-        diffusion: Diffusion,
-        lag: Lag,
-        fa: Fa,
-        init: Init,
-        out: Out,
-        nparticles: usize,
-    ) -> Self {
+impl<M: SdeModel> SDE<M> {
+    /// Wrap a model with `nparticles` particles, the default seed and the
+    /// default cache.
+    pub fn from_model(model: M, nparticles: usize) -> Self {
         Self {
-            drift,
-            diffusion,
-            lag,
-            fa,
-            init,
-            out,
-            neqs: Neqs::default(),
+            model,
             nparticles,
-            metadata: None,
-            injected_bolus_mappings: InjectedBolusMappings::default(),
+            seed: 0,
             cache: Some(SdeLikelihoodCache::new(DEFAULT_CACHE_SIZE)),
         }
     }
 
-    /// Set the number of state variables.
-    pub fn with_nstates(mut self, nstates: usize) -> Self {
-        self.neqs.nstates = nstates;
-        self.invalidate_metadata();
+    /// The model functions.
+    pub fn model(&self) -> &M {
+        &self.model
+    }
+
+    /// Number of particles.
+    pub fn nparticles(&self) -> usize {
+        self.nparticles
+    }
+
+    /// The random seed.
+    pub fn seed(&self) -> u64 {
+        self.seed
+    }
+
+    pub(crate) fn cache_enabled(&self) -> bool {
+        self.cache.is_some()
+    }
+
+    /// Use a different random seed.
+    ///
+    /// Results are deterministic for a given seed; change it to draw an
+    /// independent set of particle paths.
+    pub fn with_seed(mut self, seed: u64) -> Self {
+        self.seed = seed;
         self
-    }
-
-    /// Set the number of drug inputs (size of bolus[] and rateiv[]).
-    pub fn with_ndrugs(mut self, ndrugs: usize) -> Self {
-        self.neqs.ndrugs = ndrugs;
-        self.invalidate_metadata();
-        self
-    }
-
-    /// Set the number of output equations.
-    pub fn with_nout(mut self, nout: usize) -> Self {
-        self.neqs.nout = nout;
-        self.invalidate_metadata();
-        self
-    }
-
-    /// Attach validated handwritten-model metadata to this SDE model.
-    pub fn with_metadata(mut self, metadata: ModelMetadata) -> Result<Self, SdeMetadataError> {
-        let metadata = metadata.validate_for_with_particles(ModelKind::Sde, self.nparticles)?;
-        validate_metadata_dimensions(&metadata, &self.neqs)?;
-        self.metadata = Some(metadata);
-        Ok(self)
-    }
-
-    #[doc(hidden)]
-    pub fn with_injected_bolus_inputs(mut self, destinations: &[Option<usize>]) -> Self {
-        self.injected_bolus_mappings =
-            InjectedBolusMappings::from_destinations(self.neqs.ndrugs, destinations);
-        self
-    }
-
-    /// Access the validated metadata attached to this SDE model, if any.
-    pub fn metadata(&self) -> Option<&ValidatedModelMetadata> {
-        self.metadata.as_ref()
     }
 
     pub fn parameter_index(&self, name: &str) -> Option<usize> {
-        self.metadata()?.parameter_index(name)
+        self.model.metadata()?.parameter_index(name)
     }
 
     pub fn covariate_index(&self, name: &str) -> Option<usize> {
-        self.metadata()?.covariate_index(name)
+        self.model.metadata()?.covariate_index(name)
     }
 
     pub fn state_index(&self, name: &str) -> Option<usize> {
-        self.metadata()?.state_index(name)
+        self.model.metadata()?.state_index(name)
     }
 
-    fn invalidate_metadata(&mut self) {
-        self.metadata = None;
-        self.injected_bolus_mappings
-            .invalidate_for_ndrugs(self.neqs.ndrugs);
+    /// Simulate a subject's particles.
+    ///
+    /// With error models, run the particle filter: resample at every
+    /// observation and return the log-likelihood estimate. Without, the
+    /// particles evolve independently and the log-likelihood is zero.
+    fn simulate(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+        error_models: Option<&AssayErrorModels>,
+    ) -> Result<ParticleRun, PharmsolError> {
+        let in_context = |error| with_subject_context(&self.model, error, subject.id(), parameters);
+        self.model
+            .check_parameters(parameters)
+            .map_err(in_context)?;
+
+        let p = V::from_vec(parameters.to_vec(), NalgebraContext::new());
+        let mut run = ParticleRun {
+            predictions: Vec::new(),
+            log_likelihood: 0.0,
+            streams: RandomStreams::new(self.seed, subject.hash()),
+        };
+        for occasion in subject.occasions() {
+            self.simulate_occasion(occasion, &p, error_models, &mut run)
+                .map_err(in_context)?;
+            if run.log_likelihood == f64::NEG_INFINITY {
+                break;
+            }
+        }
+        Ok(run)
+    }
+
+    fn simulate_occasion(
+        &self,
+        occasion: &Occasion,
+        p: &V,
+        error_models: Option<&AssayErrorModels>,
+        run: &mut ParticleRun,
+    ) -> Result<(), PharmsolError> {
+        let covariates = occasion.covariates();
+        let mut ws = self.model.workspace();
+        let events = prepare_occasion(&self.model, &mut ws, occasion, p)?;
+        let infusions = infusions(&events);
+        let mut initial = V::zeros(self.model.nstates(), NalgebraContext::new());
+        self.model.init(&mut ws, 0.0, p, covariates, &mut initial)?;
+        let mut particles = vec![initial; self.nparticles];
+        let mut rates = V::zeros(self.model.ninputs(), NalgebraContext::new());
+        let mut y = V::zeros(self.model.noutputs(), NalgebraContext::new());
+
+        for (index, event) in events.iter().enumerate() {
+            match event {
+                Event::Bolus(bolus) => {
+                    let input = bolus
+                        .input_index()
+                        .expect("prepared boluses carry a dense input index");
+                    for particle in &mut particles {
+                        self.model.bolus(
+                            &mut ws,
+                            event.time(),
+                            particle,
+                            p,
+                            covariates,
+                            input,
+                            bolus.amount(),
+                        )?;
+                    }
+                }
+                // Infusions enter through the rates the drift receives.
+                Event::Infusion(_) => {}
+                Event::Observation(observation) => {
+                    fill_active_rates(&infusions, observation.time(), &mut rates);
+                    let outeq = observation
+                        .outeq_slot()
+                        .expect("prepared observations carry an output slot");
+                    let first = run.predictions.len();
+                    for particle in &particles {
+                        y.fill(0.0);
+                        self.model.outputs(
+                            &mut ws,
+                            observation.time(),
+                            particle,
+                            p,
+                            covariates,
+                            &rates,
+                            &mut y,
+                        )?;
+                        run.predictions.push(
+                            observation.to_prediction(y[outeq], particle.as_slice().to_vec()),
+                        );
+                    }
+
+                    if let Some(error_models) = error_models {
+                        let column = &run.predictions[first..];
+                        let resampled = filter(column, error_models, &mut run.streams.next())?;
+                        match resampled {
+                            Some((log_mean, indices)) => {
+                                run.log_likelihood += log_mean;
+                                particles = indices.iter().map(|&i| particles[i].clone()).collect();
+                            }
+                            None => {
+                                run.log_likelihood = f64::NEG_INFINITY;
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(next_event) = events.get(index + 1) {
+                self.advance(
+                    &mut particles,
+                    p,
+                    covariates,
+                    &infusions,
+                    event.time(),
+                    next_event.time(),
+                    run.streams.next_seed(),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Advance every particle from `start` to `end`, in parallel.
+    #[allow(clippy::too_many_arguments)]
+    fn advance(
+        &self,
+        particles: &mut [V],
+        p: &V,
+        covariates: &Covariates,
+        infusions: &[Infusion],
+        start: f64,
+        end: f64,
+        seed: u64,
+    ) -> Result<(), PharmsolError> {
+        if start == end {
+            return Ok(());
+        }
+
+        particles
+            .par_iter_mut()
+            .enumerate()
+            .try_for_each(|(index, particle)| {
+                let model = &self.model;
+                let mut ws = model.workspace();
+                let mut rates = V::zeros(model.ninputs(), NalgebraContext::new());
+                let mut rng = StdRng::seed_from_u64(mix(seed, index as u64));
+                let mut scratch = EmScratch::new(model.nstates());
+                // Drift and diffusion are evaluated one after the other, never
+                // at once, so they can share the workspace and rates.
+                let shared = std::cell::RefCell::new((&mut ws, &mut rates));
+                let mut drift = |time: f64, x: &V, dx: &mut V| {
+                    let (ws, rates) = &mut *shared.borrow_mut();
+                    fill_active_rates(infusions, time, rates);
+                    model.drift(ws, time, x, p, covariates, rates, dx)
+                };
+                let mut diffusion = |time: f64, x: &V, sigma: &mut V| {
+                    let (ws, rates) = &mut *shared.borrow_mut();
+                    fill_active_rates(infusions, time, rates);
+                    model.diffusion(ws, time, x, p, covariates, rates, sigma)
+                };
+                em::advance(
+                    &mut drift,
+                    &mut diffusion,
+                    particle,
+                    start,
+                    end,
+                    &mut rng,
+                    &mut scratch,
+                )
+            })
+    }
+
+    /// Cached particle-filter log-likelihood.
+    fn log_likelihood(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+        error_models: &AssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
+        let Some(cache) = &self.cache else {
+            return Ok(self
+                .simulate(subject, parameters, Some(error_models))?
+                .log_likelihood);
+        };
+        let key = (
+            mix(subject.hash(), self.seed),
+            parameters_hash(parameters),
+            error_models.hash(),
+        );
+        if let Some(cached) = cache.get(&key) {
+            return Ok(cached);
+        }
+        let log_likelihood = self
+            .simulate(subject, parameters, Some(error_models))?
+            .log_likelihood;
+        cache.insert(key, log_likelihood);
+        Ok(log_likelihood)
     }
 }
 
-fn validate_metadata_dimensions(
-    metadata: &ValidatedModelMetadata,
-    neqs: &Neqs,
-) -> Result<(), SdeMetadataError> {
-    let declared_states = metadata.states().len();
-    if declared_states != neqs.nstates {
-        return Err(SdeMetadataError::StateCountMismatch {
-            expected: neqs.nstates,
-            declared: declared_states,
-        });
-    }
-
-    let declared_routes = metadata.route_input_count();
-    if declared_routes != neqs.ndrugs {
-        return Err(SdeMetadataError::RouteCountMismatch {
-            expected: neqs.ndrugs,
-            declared: declared_routes,
-        });
-    }
-
-    let declared_outputs = metadata.outputs().len();
-    if declared_outputs != neqs.nout {
-        return Err(SdeMetadataError::OutputCountMismatch {
-            expected: neqs.nout,
-            declared: declared_outputs,
-        });
-    }
-
-    Ok(())
+/// The outcome of simulating one subject.
+struct ParticleRun {
+    /// Predictions in observation order, `nparticles` per observation.
+    predictions: Vec<Prediction>,
+    log_likelihood: f64,
+    streams: RandomStreams,
 }
 
-impl super::Cache for SDE {
+impl ParticleRun {
+    /// Particle predictions with one row per particle and one column per
+    /// observation.
+    fn into_matrix(self, nparticles: usize) -> Result<Array2<Prediction>, PharmsolError> {
+        let observations = self.predictions.len() / nparticles.max(1);
+        let by_observation = Array2::from_shape_vec((observations, nparticles), self.predictions)?;
+        Ok(by_observation
+            .reversed_axes()
+            .as_standard_layout()
+            .into_owned())
+    }
+}
+
+/// Weight one observation's particles and resample them.
+///
+/// Returns the log of the mean particle likelihood and the indices of the
+/// resampled particles, or `None` when every particle has zero likelihood.
+fn filter(
+    predictions: &[Prediction],
+    error_models: &AssayErrorModels,
+    rng: &mut StdRng,
+) -> Result<Option<(f64, Vec<usize>)>, PharmsolError> {
+    let mut weights = Vec::with_capacity(predictions.len());
+    for prediction in predictions {
+        weights.push(prediction.log_likelihood(error_models)?.exp());
+    }
+    let total: f64 = weights.iter().sum();
+    if !(total > 0.0 && total.is_finite()) {
+        return Ok(None);
+    }
+    let log_mean = (total / weights.len() as f64).ln();
+    weights.iter_mut().for_each(|weight| *weight /= total);
+    Ok(Some((log_mean, systematic_resample(&weights, rng))))
+}
+
+/// Systematic resampling: indices drawn from `weights` (summing to one) with
+/// a single uniform offset.
+fn systematic_resample(weights: &[f64], rng: &mut StdRng) -> Vec<usize> {
+    let n = weights.len();
+    let offset: f64 = rng.random();
+    let mut indices = Vec::with_capacity(n);
+    let mut cumulative = weights[0];
+    let mut k = 0;
+    for j in 0..n {
+        let u = (j as f64 + offset) / n as f64;
+        while cumulative < u && k + 1 < n {
+            k += 1;
+            cumulative += weights[k];
+        }
+        indices.push(k);
+    }
+    indices
+}
+
+/// Independent random streams for one subject, one per simulation step.
+struct RandomStreams {
+    base: u64,
+    step: u64,
+}
+
+impl RandomStreams {
+    fn new(seed: u64, subject: u64) -> Self {
+        Self {
+            base: mix(seed, subject),
+            step: 0,
+        }
+    }
+
+    fn next_seed(&mut self) -> u64 {
+        self.step += 1;
+        mix(self.base, self.step)
+    }
+
+    fn next(&mut self) -> StdRng {
+        StdRng::seed_from_u64(self.next_seed())
+    }
+}
+
+/// Combine two values into a well-mixed seed (SplitMix64 finalizer).
+fn mix(a: u64, b: u64) -> u64 {
+    let mut z = a ^ b.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+impl Predictions for Array2<Prediction> {
+    /// Mean prediction across particles, one per observation.
+    fn get_predictions(&self) -> Vec<Prediction> {
+        if self.is_empty() || self.ncols() == 0 {
+            return Vec::new();
+        }
+
+        let mut result = Vec::with_capacity(self.ncols());
+        for column in self.columns() {
+            let mean = column.iter().map(Prediction::prediction).sum::<f64>() / self.nrows() as f64;
+            let mut prediction = column[0].clone();
+            prediction.set_prediction(mean);
+            result.push(prediction);
+        }
+        result
+    }
+
+    /// Log-likelihood of the mean prediction across particles.
+    ///
+    /// This scores the particle cloud as if it were deterministic. For the
+    /// particle-filter estimate, use [`Equation::estimate_log_likelihood`].
+    fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError> {
+        self.get_predictions()
+            .iter()
+            .filter(|prediction| prediction.observation().is_some())
+            .map(|prediction| prediction.log_likelihood(error_models))
+            .sum()
+    }
+}
+
+impl<M: SdeModel> Cache for SDE<M> {
     fn with_cache_capacity(mut self, size: usize) -> Self {
         self.cache = Some(SdeLikelihoodCache::new(size));
         self
@@ -341,710 +472,44 @@ impl super::Cache for SDE {
     }
 }
 
-/// Predictions implementation for particle-based SDE simulation outputs.
-///
-/// This implementation manages and processes predictions from multiple particles.
-impl Predictions for Array2<Prediction> {
-    fn get_predictions(&self) -> Vec<Prediction> {
-        // Make this return the mean prediction across all particles
-        if self.is_empty() || self.ncols() == 0 {
-            return Vec::new();
-        }
-
-        let mut result = Vec::with_capacity(self.ncols());
-
-        for col in 0..self.ncols() {
-            let column = self.column(col);
-
-            let mean_prediction: f64 = column
-                .iter()
-                .map(|pred: &Prediction| pred.prediction())
-                .sum::<f64>()
-                / self.nrows() as f64;
-
-            let mut prediction = column.first().unwrap().clone();
-            prediction.set_prediction(mean_prediction);
-            result.push(prediction);
-        }
-
-        result
-    }
-    fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, crate::PharmsolError> {
-        // For SDE, compute log-likelihood using mean predictions across particles
-        let predictions = self.get_predictions();
-        if predictions.is_empty() {
-            return Ok(0.0);
-        }
-
-        let log_liks: Result<Vec<f64>, _> = predictions
-            .iter()
-            .filter(|p| p.observation().is_some())
-            .map(|p| p.log_likelihood(error_models))
-            .collect();
-
-        log_liks.map(|lls| lls.iter().sum())
-    }
-}
-
-impl EquationPriv for SDE {
-    type S = Vec<DVector<f64>>; // Vec -> particles, DVector -> state
-
-    fn empty_predictions(&self) -> Array2<Prediction> {
-        Array2::from_shape_fn((self.nparticles, 0), |_| Prediction::default())
-    }
-
-    fn add_bolus(&self, x: &mut Self::S, input: usize, amount: f64) {
-        x.par_iter_mut().for_each(|particle| {
-            particle[input] += amount;
-        });
-    }
-
-    // #[inline(always)]
-    // fn get_init(&self) -> &Init {
-    //     &self.init
-    // }
-
-    // #[inline(always)]
-    // fn get_out(&self) -> &Out {
-    //     &self.out
-    // }
-
-    // #[inline(always)]
-    // fn get_lag(&self, parameters: &[f64]) -> Option<HashMap<usize, f64>> {
-    //     Some((self.lag)(&V::from_vec(parameters.to_owned())))
-    // }
-
-    // #[inline(always)]
-    // fn get_fa(&self, parameters: &[f64]) -> Option<HashMap<usize, f64>> {
-    //     Some((self.fa)(&V::from_vec(parameters.to_owned())))
-    // }
-
-    #[inline(always)]
-    fn lag(&self) -> &Lag {
-        &self.lag
-    }
-
-    #[inline(always)]
-    fn fa(&self) -> &Fa {
-        &self.fa
-    }
-
-    #[inline(always)]
-    fn get_nstates(&self) -> usize {
-        self.neqs.nstates
-    }
-
-    #[inline(always)]
-    fn get_ndrugs(&self) -> usize {
-        self.neqs.ndrugs
-    }
-
-    #[inline(always)]
-    fn get_nouteqs(&self) -> usize {
-        self.neqs.nout
-    }
-
-    #[inline(always)]
-    fn solve(
-        &self,
-        state: &mut Self::S,
-        parameters: &[f64],
-        covariates: &Covariates,
-        infusions: &[Infusion],
-        ti: f64,
-        tf: f64,
-    ) -> Result<(), PharmsolError> {
-        let ndrugs = self.get_ndrugs();
-        state.par_iter_mut().for_each(|particle| {
-            *particle = simulate_sde_event(
-                &self.drift,
-                &self.diffusion,
-                particle.clone().into(),
-                parameters,
-                covariates,
-                infusions,
-                ndrugs,
-                ti,
-                tf,
-            )
-            .inner()
-            .clone();
-        });
-        Ok(())
-    }
-    #[inline(always)]
-    fn process_observation(
-        &self,
-        parameters: &[f64],
-        observation: &crate::Observation,
-        error_models: Option<&AssayErrorModels>,
-        _time: f64,
-        covariates: &Covariates,
-        x: &mut Self::S,
-        likelihood: &mut Vec<f64>,
-        output: &mut Self::P,
-    ) -> Result<(), PharmsolError> {
-        let mut pred = vec![Prediction::default(); self.nparticles];
-
-        pred.par_iter_mut().enumerate().for_each(|(i, p)| {
-            let mut y = V::zeros(self.get_nouteqs(), NalgebraContext::new());
-            (self.out)(
-                &x[i].clone().into(),
-                &V::from_vec(parameters.to_vec(), NalgebraContext::new()),
-                observation.time(),
-                covariates,
-                &mut y,
-            );
-            let outeq = observation
-                .outeq_slot()
-                .expect("the simulator resolves every observation's output slot");
-            *p = observation.to_prediction(y[outeq], x[i].as_slice().to_vec());
-        });
-        let out = Array2::from_shape_vec((self.nparticles, 1), pred.clone())?;
-        *output = concatenate(Axis(1), &[output.view(), out.view()]).unwrap();
-        //e = y[t] .- x[:,1]
-        // q = pdf.(Distributions.Normal(0, 0.5), e)
-        if let Some(em) = error_models {
-            let mut q: Vec<f64> = Vec::with_capacity(self.nparticles);
-
-            pred.iter().for_each(|p| {
-                let lik = p.log_likelihood(em).map(f64::exp);
-                match lik {
-                    Ok(l) => q.push(l),
-                    Err(e) => panic!("Error in likelihood calculation: {:?}", e),
-                }
-            });
-            let sum_q: f64 = q.iter().sum();
-            let w: Vec<f64> = q.iter().map(|qi| qi / sum_q).collect();
-            let i = sysresample(&w);
-            let a: Vec<DVector<f64>> = i.iter().map(|&i| x[i].clone()).collect();
-            *x = a;
-            likelihood.push(sum_q / self.nparticles as f64);
-            // let qq: Vec<f64> = i.iter().map(|&i| q[i]).collect();
-            // likelihood.push(qq.iter().sum::<f64>() / self.nparticles as f64);
-        }
-        Ok(())
-    }
-    #[inline(always)]
-    fn initial_state(&self, parameters: &[f64], covariates: &Covariates) -> Self::S {
-        let mut x = Vec::with_capacity(self.nparticles);
-        for _ in 0..self.nparticles {
-            let mut state: V = DVector::zeros(self.get_nstates()).into();
-            (self.init)(
-                &V::from_vec(parameters.to_vec(), NalgebraContext::new()),
-                0.0,
-                covariates,
-                &mut state,
-            );
-            x.push(state.inner().clone());
-        }
-        x
-    }
-
-    fn simulate_event(
-        &self,
-        parameters: &[f64],
-        event: &crate::Event,
-        next_event: Option<&crate::Event>,
-        error_models: Option<&AssayErrorModels>,
-        covariates: &Covariates,
-        x: &mut Self::S,
-        infusions: &mut Vec<Infusion>,
-        likelihood: &mut Vec<f64>,
-        output: &mut Self::P,
-    ) -> Result<(), PharmsolError> {
-        match event {
-            crate::Event::Bolus(bolus) => {
-                let input = bolus.input_index().ok_or_else(|| {
-                    let available = self
-                        .metadata()
-                        .map(|m| m.route_labels())
-                        .unwrap_or_default();
-                    PharmsolError::unknown_input_label(bolus.input(), &available)
-                })?;
-
-                if input >= self.get_ndrugs() {
-                    return Err(PharmsolError::InputOutOfRange {
-                        input,
-                        ndrugs: self.get_ndrugs(),
-                    });
-                }
-                if !self.injected_bolus_mappings.apply(x, input, bolus.amount()) {
-                    self.add_bolus(x, input, bolus.amount());
-                }
-            }
-            crate::Event::Infusion(infusion) => {
-                infusions.push(infusion.clone());
-            }
-            crate::Event::Observation(observation) => {
-                self.process_observation(
-                    parameters,
-                    observation,
-                    error_models,
-                    event.time(),
-                    covariates,
-                    x,
-                    likelihood,
-                    output,
-                )?;
-            }
-        }
-
-        if let Some(next_event) = next_event {
-            self.solve(
-                x,
-                parameters,
-                covariates,
-                infusions,
-                event.time(),
-                next_event.time(),
-            )?;
-        }
-        Ok(())
-    }
-}
-
-impl Equation for SDE {
-    type P = Array2<Prediction>; // Rows -> particles, Columns -> time
+impl<M: SdeModel> Equation for SDE<M> {
+    /// One row per particle, one column per observation.
+    type P = Array2<Prediction>;
 
     fn metadata(&self) -> Option<&ValidatedModelMetadata> {
-        self.metadata.as_ref()
+        self.model.metadata()
     }
 
     fn nstates(&self) -> usize {
-        self.neqs.nstates
+        self.model.nstates()
     }
 
     fn nouteqs(&self) -> usize {
-        self.neqs.nout
+        self.model.noutputs()
     }
 
+    /// Particle predictions without filtering: each particle follows its own
+    /// path through every observation.
     fn estimate_predictions(
         &self,
         subject: &Subject,
         parameters: &[f64],
     ) -> Result<Array2<Prediction>, PharmsolError> {
-        Ok(simulate_events(self, subject, parameters, None)?.0)
+        self.simulate(subject, parameters, None)?
+            .into_matrix(self.nparticles)
     }
 
-    /// Particle-filter log-likelihood of the subject's observations.
+    /// Particle-filter estimate of the log-likelihood.
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
         parameters: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
-        // The particle filter computes the likelihood in regular space.
-        let lik = _estimate_likelihood(self, subject, parameters, error_models)?;
-
-        if lik > 0.0 {
-            Ok(lik.ln())
-        } else {
-            Ok(f64::NEG_INFINITY)
-        }
+        self.validate_error_models(error_models)?;
+        self.log_likelihood(subject, parameters, error_models)
     }
-
-    fn simulate_subject(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-        error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Array2<Prediction>, Option<f64>), PharmsolError> {
-        simulate_events(self, subject, parameters, error_models)
-    }
-}
-
-#[inline(always)]
-fn _estimate_likelihood(
-    sde: &SDE,
-    subject: &Subject,
-    parameters: &[f64],
-    error_models: &AssayErrorModels,
-) -> Result<f64, PharmsolError> {
-    if let Some(cache) = &sde.cache {
-        let key = (
-            subject.hash(),
-            parameters_hash(parameters),
-            error_models.hash(),
-        );
-        if let Some(cached) = cache.get(&key) {
-            return Ok(cached);
-        }
-
-        let ypred = simulate_events(sde, subject, parameters, Some(error_models))?;
-        let result = ypred.1.unwrap();
-        cache.insert(key, result);
-        Ok(result)
-    } else {
-        let ypred = simulate_events(sde, subject, parameters, Some(error_models))?;
-        Ok(ypred.1.unwrap())
-    }
-}
-
-/// Performs systematic resampling of particles based on weights.
-///
-/// # Arguments
-///
-/// * `q` - Vector of particle weights
-///
-/// # Returns
-///
-/// Vector of indices to use for resampling.
-fn sysresample(q: &[f64]) -> Vec<usize> {
-    let mut qc = vec![0.0; q.len()];
-    qc[0] = q[0];
-    for i in 1..q.len() {
-        qc[i] = qc[i - 1] + q[i];
-    }
-    let m = q.len();
-    let mut rng = rng();
-    let u: Vec<f64> = (0..m)
-        .map(|i| (i as f64 + rng.random::<f64>()) / m as f64)
-        .collect();
-    let mut i = vec![0; m];
-    let mut k = 0;
-    for j in 0..m {
-        while qc[k] < u[j] {
-            k += 1;
-        }
-        i[j] = k;
-    }
-    i
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::simulator::equation::{self, Covariate, Route};
-    use crate::SubjectBuilderExt;
-    use crate::{fa, fetch_params, lag};
-
-    fn simple_sde() -> SDE {
-        let drift = |x: &V, _p: &V, _t: f64, dx: &mut V, rateiv: &V, _cov: &Covariates| {
-            dx[0] = rateiv[0] - x[0];
-        };
-        let diffusion = |_p: &V, g: &mut V| {
-            g[0] = 1.0;
-        };
-        let lag = |_p: &V, _t: f64, _cov: &Covariates| lag! {};
-        let fa = |_p: &V, _t: f64, _cov: &Covariates| fa! {};
-        let init = |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| {
-            x[0] = 0.0;
-        };
-        let out = |x: &V, p: &V, _t: f64, _cov: &Covariates, y: &mut V| {
-            fetch_params!(p, _ke, v);
-            y[0] = x[0] / v;
-        };
-
-        SDE::new(drift, diffusion, lag, fa, init, out, 128)
-            .with_nstates(1)
-            .with_ndrugs(1)
-            .with_nout(1)
-    }
-
-    fn route_policy_sde(drift: Drift) -> SDE {
-        let diffusion = |_p: &V, sigma: &mut V| {
-            sigma.fill(0.0);
-        };
-        let lag = |_p: &V, _t: f64, _cov: &Covariates| lag! {};
-        let fa = |_p: &V, _t: f64, _cov: &Covariates| fa! {};
-        let init = |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| {
-            x.fill(0.0);
-        };
-        let out = |x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V| {
-            y[0] = x[1];
-        };
-
-        SDE::new(drift, diffusion, lag, fa, init, out, 16)
-            .with_nstates(2)
-            .with_ndrugs(1)
-            .with_nout(1)
-    }
-
-    #[test]
-    fn handwritten_sde_metadata_exposes_name_lookup_and_particles() {
-        let sde = simple_sde()
-            .with_metadata(
-                equation::metadata::new("one_cmt_sde")
-                    .parameters(["ke", "v"])
-                    .covariates([Covariate::continuous("wt")])
-                    .states(["central"])
-                    .outputs(["cp"])
-                    .route(Route::infusion("iv").to_state("central"))
-                    .particles(128),
-            )
-            .expect("SDE metadata attachment should validate");
-
-        let metadata = sde.metadata().expect("metadata exists");
-        assert_eq!(metadata.kind(), ModelKind::Sde);
-        assert_eq!(metadata.particles(), Some(128));
-        assert_eq!(sde.parameter_index("ke"), Some(0));
-        assert_eq!(sde.parameter_index("v"), Some(1));
-        assert_eq!(sde.covariate_index("wt"), Some(0));
-        assert_eq!(sde.state_index("central"), Some(0));
-        assert!(metadata.route("iv").is_some());
-        assert!(metadata.output("cp").is_some());
-    }
-
-    #[test]
-    fn handwritten_sde_metadata_resolves_numeric_labels_by_exact_name() {
-        let drift = |_x: &V, _p: &V, _t: f64, dx: &mut V, rateiv: &V, _cov: &Covariates| {
-            dx.fill(0.0);
-            dx[1] = rateiv[0];
-        };
-        let diffusion = |_p: &V, sigma: &mut V| {
-            sigma.fill(0.0);
-        };
-        let lag = |_p: &V, _t: f64, _cov: &Covariates| lag! {};
-        let fa = |_p: &V, _t: f64, _cov: &Covariates| fa! {};
-        let init = |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| {
-            x.fill(0.0);
-        };
-        let out = |x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V| {
-            y[0] = x[1];
-        };
-
-        let sde = SDE::new(drift, diffusion, lag, fa, init, out, 16)
-            .with_nstates(2)
-            .with_ndrugs(1)
-            .with_nout(1)
-            .with_metadata(
-                equation::metadata::new("numeric_alias_sde")
-                    .states(["depot", "central"])
-                    .outputs(["1"])
-                    .route(Route::infusion("1").to_state("central"))
-                    .particles(16),
-            )
-            .expect("SDE metadata attachment should validate");
-
-        let numeric = Subject::builder("numeric")
-            .infusion(0.0, 100.0, "1", 1.0)
-            .observation(1.0, 0.0, "1")
-            .build();
-        let prediction = sde
-            .estimate_predictions(&numeric, &crate::parameters::dense([]))
-            .expect("numeric labels should resolve by exact name")[[0, 0]]
-        .prediction();
-        assert!(prediction > 0.0);
-
-        // `input_1` / `outeq_1` are different names, not aliases of `1`.
-        for prefixed in [
-            Subject::builder("prefixed_input")
-                .infusion(0.0, 100.0, "input_1", 1.0)
-                .observation(1.0, 0.0, "1")
-                .build(),
-            Subject::builder("prefixed_output")
-                .infusion(0.0, 100.0, "1", 1.0)
-                .observation(1.0, 0.0, "outeq_1")
-                .build(),
-        ] {
-            assert!(sde
-                .estimate_predictions(&prefixed, &crate::parameters::dense([]))
-                .is_err());
-        }
-    }
-
-    #[test]
-    fn handwritten_sde_without_metadata_keeps_raw_path() {
-        let sde = simple_sde();
-
-        assert!(sde.metadata().is_none());
-        assert_eq!(sde.parameter_index("ke"), None);
-    }
-
-    #[test]
-    fn handwritten_sde_rejects_dimension_mismatches() {
-        let error = simple_sde()
-            .with_metadata(
-                equation::metadata::new("bad_sde")
-                    .parameters(["ke", "v"])
-                    .states(["central", "peripheral"])
-                    .outputs(["cp"])
-                    .route(Route::infusion("iv").to_state("central"))
-                    .particles(128),
-            )
-            .expect_err("mismatched state metadata must fail");
-
-        assert_eq!(
-            error,
-            SdeMetadataError::StateCountMismatch {
-                expected: 1,
-                declared: 2,
-            }
-        );
-    }
-
-    #[test]
-    fn handwritten_sde_rejects_particle_mismatch() {
-        let error = simple_sde()
-            .with_metadata(
-                equation::metadata::new("particle_conflict")
-                    .parameters(["ke", "v"])
-                    .states(["central"])
-                    .outputs(["cp"])
-                    .route(Route::infusion("iv").to_state("central"))
-                    .particles(64),
-            )
-            .expect_err("mismatched SDE particles must fail");
-
-        assert_eq!(
-            error,
-            SdeMetadataError::Validation(ModelMetadataError::ParticleCountConflict {
-                declared: 64,
-                fallback: 128,
-            })
-        );
-    }
-
-    #[test]
-    fn changing_dimensions_after_metadata_clears_sde_metadata() {
-        let sde = simple_sde()
-            .with_metadata(
-                equation::metadata::new("one_cmt_sde")
-                    .parameters(["ke", "v"])
-                    .states(["central"])
-                    .outputs(["cp"])
-                    .route(Route::infusion("iv").to_state("central"))
-                    .particles(128),
-            )
-            .expect("metadata attachment should validate")
-            .with_nout(2);
-
-        assert!(sde.metadata().is_none());
-    }
-
-    #[test]
-    fn sde_metadata_input_policy_is_descriptive_only_for_bolus_routes() {
-        let zero_drift = |_x: &V, _p: &V, _t: f64, dx: &mut V, _rateiv: &V, _cov: &Covariates| {
-            dx.fill(0.0);
-        };
-
-        let explicit = route_policy_sde(zero_drift)
-            .with_metadata(
-                equation::metadata::new("explicit_bolus")
-                    .parameters(["theta"])
-                    .states(["depot", "central"])
-                    .outputs(["cp"])
-                    .route(Route::bolus("oral").to_state("central"))
-                    .particles(16),
-            )
-            .expect("explicit metadata should validate");
-
-        let injected = route_policy_sde(zero_drift)
-            .with_metadata(
-                equation::metadata::new("injected_bolus")
-                    .parameters(["theta"])
-                    .states(["depot", "central"])
-                    .outputs(["cp"])
-                    .route(
-                        Route::bolus("oral")
-                            .to_state("central")
-                            .inject_input_to_destination(),
-                    )
-                    .particles(16),
-            )
-            .expect("injected metadata should validate");
-
-        let subject = Subject::builder("bolus_route")
-            .bolus(0.0, 100.0, "oral")
-            .missing_observation(0.1, "cp")
-            .build();
-
-        let explicit_predictions = explicit
-            .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
-            .unwrap();
-        let injected_predictions = injected
-            .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
-            .unwrap();
-
-        assert_eq!(explicit_predictions[[0, 0]].prediction(), 0.0);
-        assert_eq!(injected_predictions[[0, 0]].prediction(), 0.0);
-    }
-
-    #[test]
-    fn sde_metadata_input_policy_does_not_change_explicit_rateiv_behavior() {
-        let rateiv_drift = |_x: &V, _p: &V, _t: f64, dx: &mut V, rateiv: &V, _cov: &Covariates| {
-            dx.fill(0.0);
-            dx[1] = rateiv[0];
-        };
-
-        let explicit = route_policy_sde(rateiv_drift)
-            .with_metadata(
-                equation::metadata::new("explicit_infusion")
-                    .parameters(["theta"])
-                    .states(["depot", "central"])
-                    .outputs(["cp"])
-                    .route(Route::infusion("iv").to_state("central"))
-                    .particles(16),
-            )
-            .expect("explicit metadata should validate");
-
-        let injected = route_policy_sde(rateiv_drift)
-            .with_metadata(
-                equation::metadata::new("injected_infusion")
-                    .parameters(["theta"])
-                    .states(["depot", "central"])
-                    .outputs(["cp"])
-                    .route(
-                        Route::infusion("iv")
-                            .to_state("central")
-                            .inject_input_to_destination(),
-                    )
-                    .particles(16),
-            )
-            .expect("injected metadata should validate");
-
-        let subject = Subject::builder("infusion_route")
-            .infusion(0.0, 100.0, "iv", 1.0)
-            .missing_observation(1.0, "cp")
-            .build();
-
-        let explicit_predictions = explicit
-            .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
-            .unwrap();
-        let injected_predictions = injected
-            .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
-            .unwrap();
-
-        let explicit_prediction = explicit_predictions[[0, 0]].prediction();
-        let injected_prediction = injected_predictions[[0, 0]].prediction();
-
-        assert!(explicit_prediction > 0.0);
-        assert!((injected_prediction - explicit_prediction).abs() < 1e-8);
-    }
-
-    #[test]
-    fn clearing_sde_metadata_preserves_raw_bolus_behavior() {
-        let zero_drift = |_x: &V, _p: &V, _t: f64, dx: &mut V, _rateiv: &V, _cov: &Covariates| {
-            dx.fill(0.0);
-        };
-
-        let sde = route_policy_sde(zero_drift)
-            .with_metadata(
-                equation::metadata::new("injected_bolus")
-                    .parameters(["theta"])
-                    .states(["depot", "central"])
-                    .outputs(["cp"])
-                    .route(
-                        Route::bolus("oral")
-                            .to_state("central")
-                            .inject_input_to_destination(),
-                    )
-                    .particles(16),
-            )
-            .expect("injected metadata should validate")
-            .with_nout(1);
-
-        let subject = Subject::builder("bolus_route")
-            .bolus(0.0, 100.0, 0)
-            .missing_observation(0.1, 0)
-            .build();
-
-        let predictions = sde
-            .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
-            .unwrap();
-
-        assert!(sde.metadata().is_none());
-        assert_eq!(predictions[[0, 0]].prediction(), 0.0);
-    }
-}
+mod tests;

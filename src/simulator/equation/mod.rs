@@ -47,7 +47,6 @@
 //! assert!(metadata.output("cp").is_some());
 //! ```
 
-use std::fmt::Debug;
 pub mod analytical;
 pub mod metadata;
 pub mod model;
@@ -62,9 +61,7 @@ pub use sde::*;
 
 use crate::{
     error_model::{AssayErrorModels, ErrorModelError},
-    simulator::{Fa, Lag},
-    Covariates, Event, Infusion, InputLabel, Observation, Occasion, OutputLabel, PharmsolError,
-    Subject,
+    OutputLabel, PharmsolError, Subject,
 };
 
 use super::likelihood::Prediction;
@@ -126,183 +123,6 @@ pub trait Cache: Sized {
     ///
     /// Disables caching and discards all cached entries.
     fn disable_cache(self) -> Self;
-}
-
-pub(crate) trait EquationPriv: Equation {
-    type S: Debug;
-    fn empty_predictions(&self) -> Self::P;
-    // fn get_init(&self) -> &Init;
-    // fn get_out(&self) -> &Out;
-    fn lag(&self) -> &Lag;
-    fn fa(&self) -> &Fa;
-    fn get_nstates(&self) -> usize;
-    fn get_ndrugs(&self) -> usize;
-    fn get_nouteqs(&self) -> usize;
-    fn solve(
-        &self,
-        state: &mut Self::S,
-        parameters: &[f64],
-        covariates: &Covariates,
-        infusions: &[Infusion],
-        start_time: f64,
-        end_time: f64,
-    ) -> Result<(), PharmsolError>;
-    fn add_bolus(&self, x: &mut Self::S, input: usize, amount: f64);
-
-    fn resolve_input_label(
-        &self,
-        label: &InputLabel,
-        expected_kind: RouteKind,
-    ) -> Result<usize, PharmsolError> {
-        if let Some(metadata) = self.metadata() {
-            // A bolus and an infusion may share a label, so resolution must
-            // match the kind as well: bolus events resolve bolus routes and
-            // infusion events resolve infusion routes.
-            let route = match metadata.route_for_label(label.as_str(), expected_kind) {
-                Some(route) => route,
-                None => {
-                    let other_kind = match expected_kind {
-                        RouteKind::Bolus => RouteKind::Infusion,
-                        RouteKind::Infusion => RouteKind::Bolus,
-                    };
-                    if let Some(other) = metadata.route_for_label(label.as_str(), other_kind) {
-                        return Err(PharmsolError::UnsupportedInputRouteKind {
-                            input: other.input_index(),
-                            kind: match expected_kind {
-                                RouteKind::Bolus => pharmsol_dsl::RouteKind::Bolus,
-                                RouteKind::Infusion => pharmsol_dsl::RouteKind::Infusion,
-                            },
-                        });
-                    }
-                    return Err(PharmsolError::unknown_input_label(
-                        label.as_str(),
-                        &metadata.route_labels(),
-                    ));
-                }
-            };
-
-            return Ok(route.input_index());
-        }
-
-        label
-            .index()
-            .ok_or_else(|| PharmsolError::unknown_input_label(label.as_str(), &[]))
-    }
-
-    fn resolve_output_label(&self, label: &OutputLabel) -> Result<usize, PharmsolError> {
-        if let Some(metadata) = self.metadata() {
-            return metadata.output_for_label(label.as_str()).ok_or_else(|| {
-                PharmsolError::unknown_output_label(label.as_str(), &metadata.output_labels())
-            });
-        }
-
-        label
-            .index()
-            .ok_or_else(|| PharmsolError::unknown_output_label(label.as_str(), &[]))
-    }
-
-    fn resolve_occasion_events(
-        &self,
-        occasion: &Occasion,
-        parameters: &[f64],
-        covariates: &Covariates,
-    ) -> Result<Vec<Event>, PharmsolError> {
-        let mut resolved = occasion.clone();
-
-        for event in resolved.events_iter_mut() {
-            match event {
-                Event::Bolus(bolus) => {
-                    let input = self.resolve_input_label(bolus.input(), RouteKind::Bolus)?;
-                    bolus.set_input(input);
-                }
-                Event::Infusion(infusion) => {
-                    let input = self.resolve_input_label(infusion.input(), RouteKind::Infusion)?;
-                    infusion.set_input(input);
-                }
-                Event::Observation(observation) => {
-                    let outeq = self.resolve_output_label(observation.outeq())?;
-                    observation.set_outeq_slot(outeq);
-                }
-            }
-        }
-
-        Ok(resolved.process_events(Some((self.fa(), self.lag(), parameters, covariates))))
-    }
-    #[allow(clippy::too_many_arguments)]
-    fn process_observation(
-        &self,
-        parameters: &[f64],
-        observation: &Observation,
-        error_models: Option<&AssayErrorModels>,
-        time: f64,
-        covariates: &Covariates,
-        x: &mut Self::S,
-        likelihood: &mut Vec<f64>,
-        output: &mut Self::P,
-    ) -> Result<(), PharmsolError>;
-
-    fn initial_state(&self, parameters: &[f64], covariates: &Covariates) -> Self::S;
-
-    #[allow(clippy::too_many_arguments)]
-    fn simulate_event(
-        &self,
-        parameters: &[f64],
-        event: &Event,
-        next_event: Option<&Event>,
-        error_models: Option<&AssayErrorModels>,
-        covariates: &Covariates,
-        x: &mut Self::S,
-        infusions: &mut Vec<Infusion>,
-        likelihood: &mut Vec<f64>,
-        output: &mut Self::P,
-    ) -> Result<(), PharmsolError> {
-        match event {
-            Event::Bolus(bolus) => {
-                let input = bolus.input_index().ok_or_else(|| {
-                    let available = self
-                        .metadata()
-                        .map(|m| m.route_labels())
-                        .unwrap_or_default();
-                    PharmsolError::unknown_input_label(bolus.input(), &available)
-                })?;
-
-                if input >= self.get_ndrugs() {
-                    return Err(PharmsolError::InputOutOfRange {
-                        input,
-                        ndrugs: self.get_ndrugs(),
-                    });
-                }
-                self.add_bolus(x, input, bolus.amount());
-            }
-            Event::Infusion(infusion) => {
-                infusions.push(infusion.clone());
-            }
-            Event::Observation(observation) => {
-                self.process_observation(
-                    parameters,
-                    observation,
-                    error_models,
-                    event.time(),
-                    covariates,
-                    x,
-                    likelihood,
-                    output,
-                )?;
-            }
-        }
-
-        if let Some(next_event) = next_event {
-            self.solve(
-                x,
-                parameters,
-                covariates,
-                infusions,
-                event.time(),
-                next_event.time(),
-            )?;
-        }
-        Ok(())
-    }
 }
 
 /// A model that can be simulated against subject data.
@@ -401,45 +221,6 @@ pub trait Equation: Clone + Send + Sync + 'static {
     }
 }
 
-/// Run the event loop of an [`EquationPriv`] family.
-///
-/// Returns the predictions and, when error models are given, the product of the
-/// per-observation likelihoods.
-pub(crate) fn simulate_events<E: EquationPriv>(
-    equation: &E,
-    subject: &Subject,
-    parameters: &[f64],
-    error_models: Option<&AssayErrorModels>,
-) -> Result<(E::P, Option<f64>), PharmsolError> {
-    if let Some(error_models) = error_models {
-        equation.validate_error_models(error_models)?;
-    }
-
-    let mut output = equation.empty_predictions();
-    let mut likelihood = Vec::new();
-    for occasion in subject.occasions() {
-        let covariates = occasion.covariates();
-
-        let mut x = equation.initial_state(parameters, covariates);
-        let mut infusions = Vec::new();
-        let events = equation.resolve_occasion_events(occasion, parameters, covariates)?;
-        for (index, event) in events.iter().enumerate() {
-            equation.simulate_event(
-                parameters,
-                event,
-                events.get(index + 1),
-                error_models,
-                covariates,
-                &mut x,
-                &mut infusions,
-                &mut likelihood,
-                &mut output,
-            )?;
-        }
-    }
-    let ll = error_models.map(|_| likelihood.iter().product::<f64>());
-    Ok((output, ll))
-}
 /// Hash parameter vectors to a u64 for cache key generation.
 #[inline(always)]
 pub(crate) fn parameters_hash(parameters: &[f64]) -> u64 {
