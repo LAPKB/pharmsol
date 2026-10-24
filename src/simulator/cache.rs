@@ -1,7 +1,7 @@
 //! Cache mechanisms for [Equation](crate::Equation)s
 //!
 //! This module provides lightweight cache wrappers that can be embedded
-//! directly in equation structs ([`ODE`], [`Analytical`], [`SDE`]).
+//! directly in equation structs ([`ODE`](crate::ODE), [`Analytical`](crate::Analytical), [`SDE`](crate::SDE)).
 //! Each equation instance owns a cache by default; cloning the equation
 //! produces a shallow clone that shares the same cache data.
 //!

@@ -1,8 +1,8 @@
-//! Handwritten equation families and their shared simulation interfaces.
+//! Equation families and their shared simulation interfaces.
 //!
-//! This module is the public home for handwritten [`ODE`], [`Analytical`], and
-//! [`SDE`] models, plus the shared [`Equation`] trait and the metadata types
-//! that attach public names to parameters, states, routes, and outputs.
+//! This module is the public home for the [`ODE`], [`Analytical`], and [`SDE`]
+//! families, the shared [`Equation`] trait, and the metadata types that attach
+//! public names to parameters, states, routes, and outputs.
 //!
 //! Use this module when you want to:
 //! - choose between deterministic ODE, analytical, and stochastic SDE models
@@ -15,6 +15,18 @@
 //! - [`ODE`] for deterministic models that must be numerically integrated.
 //! - [`Analytical`] for supported closed-form models.
 //! - [`SDE`] for stochastic models that use particles.
+//!
+//! # Models And Drivers
+//!
+//! Each family is a driver that advances a model through a subject's events
+//! and caches the results. The model supplies the functions it evaluates: the
+//! shared [`Model`] trait (initial state, doses, lag, bioavailability,
+//! outputs) plus one family trait ([`OdeModel`], [`AnalyticalModel`],
+//! [`SdeModel`]).
+//!
+//! Handwritten models ([`NativeOde`], [`NativeAnalytical`], [`NativeSde`]) are
+//! the default, so `ODE::new(...)` works as before. Models compiled from the
+//! DSL use the same drivers with a `JitModel`.
 //!
 //! # Labels And Metadata
 //!
