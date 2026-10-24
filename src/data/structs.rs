@@ -5,6 +5,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::sync::OnceLock;
 
 /// Times, values and censoring flags for one output label
 pub(crate) type ObservedSeries = (Vec<f64>, Vec<f64>, Vec<Censor>);
@@ -394,6 +395,10 @@ impl From<Subject> for Data {
 pub struct Subject {
     id: String,
     occasions: Vec<Occasion>,
+    /// Memoized [`Subject::hash`]. Every method that hands out the occasions
+    /// mutably clears it.
+    #[serde(skip)]
+    hash: OnceLock<u64>,
 }
 impl Subject {
     /// Create a new subject with the given ID and occasions
@@ -403,7 +408,7 @@ impl Subject {
     /// * `id` - The subject identifier
     /// * `occasions` - Vector of occasions for this subject
     pub(crate) fn new(id: String, occasions: Vec<Occasion>) -> Self {
-        let mut subject = Subject { id, occasions };
+        let mut subject = Subject::from_occasions(id, occasions);
         for occasion in subject.occasions.iter_mut() {
             occasion.sort();
         }
@@ -442,16 +447,22 @@ impl Subject {
     ///
     /// A new subject containing the specified occasions
     pub fn from_occasions(id: String, occasions: Vec<Occasion>) -> Self {
-        Subject { id, occasions }
+        Subject {
+            id,
+            occasions,
+            hash: OnceLock::new(),
+        }
     }
 
     /// Iterate over a mutable reference to the occasions
     pub fn occasions_mut(&mut self) -> &mut Vec<Occasion> {
+        self.hash.take();
         &mut self.occasions
     }
 
     /// Get a mutable iterator to the occasions
     pub fn occasions_iter_mut(&'_ mut self) -> std::slice::IterMut<'_, Occasion> {
+        self.hash.take();
         self.occasions.iter_mut()
     }
 
@@ -480,6 +491,7 @@ impl Subject {
     ///
     /// An `Option` containing a mutable reference to the occasion if found, or `None` if not found
     pub fn get_occasion_mut(&mut self, index: usize) -> Option<&mut Occasion> {
+        self.hash.take();
         self.occasions.iter_mut().find(|occ| occ.index() == index)
     }
 
@@ -498,6 +510,7 @@ impl Subject {
     ///
     /// A mutable iterator yielding references to occasions
     pub fn iter_mut(&'_ mut self) -> std::slice::IterMut<'_, Occasion> {
+        self.hash.take();
         self.occasions.iter_mut()
     }
 
@@ -522,7 +535,12 @@ impl Subject {
     /// Calculate the hash for a subject
     ///
     /// The hash is produced over all events and all covariates of the subject, providing a unique identifier for the subject data.
+    /// It is computed once and reused until the subject is modified.
     pub fn hash(&self) -> u64 {
+        *self.hash.get_or_init(|| self.compute_hash())
+    }
+
+    fn compute_hash(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = ahash::AHasher::default();
         self.id.hash(&mut hasher);
@@ -585,7 +603,7 @@ impl<'a> IntoIterator for &'a mut Subject {
     type IntoIter = std::slice::IterMut<'a, Occasion>;
     /// Iterate mutably over all occasions in the subject
     fn into_iter(self) -> Self::IntoIter {
-        self.occasions.iter_mut()
+        self.iter_mut()
     }
 }
 
@@ -1752,6 +1770,26 @@ mod tests {
             .observation(1.0, 5.0, 0)
             .build();
         assert_ne!(a.hash(), b.hash());
+    }
+
+    #[test]
+    fn hash_follows_mutation() {
+        let mut subject = Subject::builder("s1")
+            .bolus(0.0, 100.0, 0)
+            .observation(1.0, 5.0, 0)
+            .build();
+        let before = subject.hash();
+
+        subject.occasions_mut()[0].add_bolus(2.0, 50.0, 0);
+        let after = subject.hash();
+        assert_ne!(before, after);
+        assert_eq!(after, subject.clone().compute_hash());
+
+        for occasion in &mut subject {
+            occasion.add_bolus(3.0, 25.0, 0);
+        }
+        assert_ne!(subject.hash(), after);
+        assert_eq!(subject.hash(), subject.compute_hash());
     }
 
     #[test]

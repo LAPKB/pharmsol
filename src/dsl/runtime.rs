@@ -29,9 +29,7 @@
 //! states = central
 //! outputs = cp
 //!
-//! infusion(iv) -> central
-//!
-//! dx(central) = -ke * central
+//! dx(central) = -ke * central + infusion(iv)
 //! out(cp) = central / v
 //! "#;
 //!
@@ -60,12 +58,12 @@ use std::fmt;
 use ndarray::Array2;
 use thiserror::Error;
 
-use super::backend::{RuntimeAnalyticalModel, RuntimeOdeModel, RuntimeSdeModel};
 use super::jit::{compile_execution_model_to_jit, JitCompileError};
+use super::model::{RuntimeAnalyticalModel, RuntimeOdeModel, RuntimeSdeModel};
 use super::model_info::RuntimeModelInfo;
 use crate::{
     simulator::likelihood::{Prediction, SubjectPredictions},
-    Parameters, PharmsolError, Subject, ValidatedModelMetadata,
+    Equation, Parameters, PharmsolError, Subject, ValidatedModelMetadata,
 };
 use pharmsol_dsl::{
     analyze_module, compile_analyzed_model, parse_module, AnalysisError, CompileError, Diagnostic,

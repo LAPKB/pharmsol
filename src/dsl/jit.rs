@@ -8,12 +8,11 @@ use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
 
-pub use super::backend::CompiledModelFunction;
+pub use super::artifact::CompiledModelFunction;
+use super::artifact::RuntimeExecutionArtifact;
 #[cfg(test)]
-use super::backend::{estimate_effect_2_callback, estimate_effect_3_callback};
-use super::backend::{
-    RuntimeAnalyticalModel, RuntimeExecutionArtifact, RuntimeOdeModel, RuntimeSdeModel,
-};
+use super::artifact::{estimate_effect_2_callback, estimate_effect_3_callback};
+use super::model::{RuntimeAnalyticalModel, RuntimeOdeModel, RuntimeSdeModel};
 use super::model_info::RuntimeModelInfo;
 use super::runtime::CompiledRuntimeModel;
 use pharmsol_dsl::execution::{
@@ -1381,7 +1380,7 @@ pub fn compile_ode_model_to_jit(
             Some(model.span),
         ));
     }
-    RuntimeOdeModel::new(
+    RuntimeOdeModel::compiled(
         RuntimeModelInfo::from_execution_model(model),
         compile_execution_artifact(model)?,
     )
@@ -1401,7 +1400,7 @@ pub fn compile_analytical_model_to_jit(
             Some(model.span),
         ));
     }
-    RuntimeAnalyticalModel::new(
+    RuntimeAnalyticalModel::compiled(
         RuntimeModelInfo::from_execution_model(model),
         compile_execution_artifact(model)?,
     )
@@ -1421,7 +1420,7 @@ pub fn compile_sde_model_to_jit(
             Some(model.span),
         ));
     }
-    RuntimeSdeModel::new(
+    RuntimeSdeModel::compiled(
         RuntimeModelInfo::from_execution_model(model),
         compile_execution_artifact(model)?,
     )
@@ -2433,6 +2432,85 @@ model analytical_mixed {
                 max_relative = 1e-4
             );
         }
+    }
+
+    #[test]
+    fn jit_and_native_sde_particle_filters_agree() {
+        use crate::{AssayErrorModel, AssayErrorModels, ErrorPoly};
+
+        let model = load_corpus_model("vanco_sde");
+        let jit = compile_sde_model_to_jit(&model)
+            .expect("compile jit sde model")
+            .with_particles(64);
+        let native = SDE::new(
+            |x, p, _t, dx, _rateiv, _cov| {
+                let ka = p[0];
+                let ke0 = p[1];
+                let kcp = p[2];
+                let kpc = p[3];
+                dx[0] = -ka * x[0];
+                dx[1] = ka * x[0] - (x[3] + kcp) * x[1] + kpc * x[2];
+                dx[2] = kcp * x[1] - kpc * x[2];
+                dx[3] = -x[3] + ke0;
+            },
+            |p, sigma| {
+                sigma.fill(0.0);
+                sigma[3] = p[5];
+            },
+            |_p, _t, _cov| std::collections::HashMap::new(),
+            |_p, _t, _cov| std::collections::HashMap::new(),
+            |p, _t, _cov, x| {
+                x[3] = p[1];
+            },
+            |x, p, t, cov, y| {
+                let wt: f64 = cov
+                    .get_covariate("wt")
+                    .map(|values| values.interpolate(t).unwrap())
+                    .unwrap();
+                y[0] = x[1] / (p[4] * wt);
+            },
+            64,
+        )
+        .with_nstates(4)
+        .with_ndrugs(1)
+        .with_nout(1)
+        .with_metadata(
+            equation::metadata::new("vanco_sde")
+                .kind(equation::ModelKind::Sde)
+                .parameters(["ka", "ke0", "kcp", "kpc", "vol", "ske"])
+                .covariates([equation::Covariate::locf("wt")])
+                .states(["depot", "central", "peripheral", "ke_latent"])
+                .outputs(["cp"])
+                .route(equation::Route::bolus("oral").to_state("depot"))
+                .particles(64),
+        )
+        .expect("native metadata validates");
+
+        // One subject for both, so both draw the same random streams.
+        let subject = Subject::builder("sde")
+            .covariate("wt", 0.0, 70.0)
+            .bolus(0.0, 80.0, "oral")
+            .observation(0.5, 0.04, "cp")
+            .observation(1.0, 0.05, "cp")
+            .observation(2.0, 0.045, "cp")
+            .observation(4.0, 0.03, "cp")
+            .build();
+        let error_models = AssayErrorModels::new()
+            .add(
+                "cp",
+                AssayErrorModel::additive(ErrorPoly::new(0.01, 0.0, 0.0, 0.0), 0.0),
+            )
+            .unwrap();
+        let support = [1.1, 0.2, 0.12, 0.08, 15.0, 0.3];
+
+        let jit_ll = jit
+            .estimate_log_likelihood(&subject, &support, &error_models)
+            .expect("jit particle filter");
+        let native_ll = native
+            .estimate_log_likelihood(&subject, &support, &error_models)
+            .expect("native particle filter");
+        assert!(jit_ll.is_finite());
+        assert_relative_eq!(jit_ll, native_ll, max_relative = 1e-6);
     }
 
     #[test]

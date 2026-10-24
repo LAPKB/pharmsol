@@ -74,19 +74,21 @@
 //! `pharmsol-dsl`. For a complete runtime path inside the main crate, stay in
 //! [`pharmsol::dsl`](self).
 
-mod backend;
+mod artifact;
 mod jit;
+mod model;
 mod model_info;
 mod runtime;
 
-pub use backend::{
+pub use artifact::{
     CompiledModelFunction, EstimateEffect2Callback, EstimateEffect3Callback,
-    RuntimeAnalyticalModel, RuntimeExecutionArtifact, RuntimeOdeModel, RuntimeSdeModel,
+    RuntimeExecutionArtifact,
 };
 pub use jit::{
     compile_analytical_model_to_jit, compile_execution_artifact, compile_execution_model_to_jit,
     compile_ode_model_to_jit, compile_sde_model_to_jit, JitCompileError,
 };
+pub use model::{JitModel, JitWorkspace, RuntimeAnalyticalModel, RuntimeOdeModel, RuntimeSdeModel};
 pub use model_info::{
     RuntimeCovariateInfo, RuntimeModelInfo, RuntimeOutputInfo, RuntimeRouteInfo, RuntimeStateInfo,
 };

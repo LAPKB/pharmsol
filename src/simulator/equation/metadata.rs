@@ -233,12 +233,20 @@ impl ValidatedModelMetadata {
     /// names. A numeric label such as `"1"` is just a name: it never falls
     /// back to a declaration position and is not aliased to anything else.
     ///
+    /// A route of the requested kind wins; otherwise a route that
+    /// [accepts either kind](ValidatedRoute::accepts_either_kind) matches.
+    ///
     /// Use [`ValidatedRoute::input_index`] on the result for the dense
     /// execution input slot.
     pub fn route_for_label(&self, label: &str, kind: RouteKind) -> Option<&ValidatedRoute> {
         self.routes
             .iter()
             .find(|route| route.kind() == kind && route.name() == label)
+            .or_else(|| {
+                self.routes
+                    .iter()
+                    .find(|route| route.accepts_either_kind() && route.name() == label)
+            })
     }
 
     /// Resolve a public output label from data to its dense output index.
@@ -290,6 +298,7 @@ impl ValidatedModelMetadata {
 pub struct ValidatedRoute {
     name: String,
     kind: RouteKind,
+    either_kind: bool,
     declaration_index: usize,
     input_index: usize,
     destination: String,
@@ -307,6 +316,11 @@ impl ValidatedRoute {
 
     pub fn kind(&self) -> RouteKind {
         self.kind
+    }
+
+    /// Whether dose events of either kind resolve to this route.
+    pub fn accepts_either_kind(&self) -> bool {
+        self.either_kind
     }
 
     /// Get the declaration-order index for this route.
@@ -674,14 +688,9 @@ where
     }
 }
 
-/// Route declaration kind.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RouteKind {
-    /// Instantaneous dose input.
-    Bolus,
-    /// Dose input over a duration.
-    Infusion,
-}
+/// Route declaration kind: [`RouteKind::Bolus`] for instantaneous doses,
+/// [`RouteKind::Infusion`] for doses given over a duration.
+pub use pharmsol_dsl::RouteKind;
 
 /// How route inputs should be interpreted by the execution layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -700,6 +709,7 @@ pub enum RouteInputPolicy {
 pub struct Route {
     name: String,
     kind: RouteKind,
+    either_kind: bool,
     destination: Option<String>,
     has_lag: bool,
     has_bioavailability: bool,
@@ -722,6 +732,7 @@ impl Route {
         Self {
             name: name.into(),
             kind,
+            either_kind: false,
             destination: None,
             has_lag: false,
             has_bioavailability: false,
@@ -747,6 +758,15 @@ impl Route {
         self
     }
 
+    /// Let dose events of either kind resolve to this route.
+    ///
+    /// The route keeps its declared kind for input-slot numbering. DSL routes
+    /// declared without a kind use this.
+    pub fn accept_either_kind(mut self) -> Self {
+        self.either_kind = true;
+        self
+    }
+
     /// Request direct injection into the destination state at execution time.
     pub fn inject_input_to_destination(mut self) -> Self {
         self.input_policy = Some(RouteInputPolicy::InjectToDestination);
@@ -765,6 +785,11 @@ impl Route {
 
     pub fn kind(&self) -> RouteKind {
         self.kind
+    }
+
+    /// Whether dose events of either kind resolve to this route.
+    pub fn accepts_either_kind(&self) -> bool {
+        self.either_kind
     }
 
     pub fn destination(&self) -> Option<&str> {
@@ -959,6 +984,7 @@ fn validate_route(
     Ok(ValidatedRoute {
         name: route.name,
         kind: route.kind,
+        either_kind: route.either_kind,
         declaration_index,
         input_index,
         destination,
