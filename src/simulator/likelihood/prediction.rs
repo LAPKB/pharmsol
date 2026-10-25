@@ -4,8 +4,8 @@
 //! observation-prediction pair along with metadata needed for likelihood
 //! calculation.
 
-use crate::data::error_model::AssayErrorModels;
 use crate::data::event::{Observation, OutputLabel};
+use crate::data::output_model::OutputModels;
 use crate::{Censor, ErrorPoly, PharmsolError};
 
 use super::ObservationModel;
@@ -77,10 +77,7 @@ impl Prediction {
     /// model.
     ///
     /// The density, censoring included, comes from the
-    /// [`ObservationModel`]: [`AssayErrorModels`] take sigma from the
-    /// observation (non-parametric algorithms such as NPAG, NPOD), while
-    /// [`crate::ResidualErrorModels`] take it from the prediction (parametric
-    /// algorithms such as SAEM, FOCE).
+    /// [`ObservationModel`], usually an [`OutputModels`].
     ///
     /// # Returns
     /// The log-likelihood value, zero in the case of a missing observation
@@ -123,7 +120,7 @@ impl Prediction {
         since = "0.23.0",
         note = "Use log_likelihood() instead for better numerical stability"
     )]
-    pub fn likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError> {
+    pub fn likelihood(&self, error_models: &OutputModels) -> Result<f64, PharmsolError> {
         let log_lik = self.log_likelihood(error_models)?;
         let lik = log_lik.exp();
 
@@ -216,8 +213,8 @@ mod tests {
         }
     }
 
-    fn create_error_models() -> AssayErrorModels {
-        AssayErrorModels::new()
+    fn create_error_models() -> OutputModels {
+        OutputModels::new()
             .add(
                 0,
                 AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0),

@@ -65,8 +65,8 @@ fn sde(nparticles: usize) -> SDE {
 
 const P: [f64; 3] = [0.5, 10.0, 0.0];
 
-fn error_models() -> AssayErrorModels {
-    AssayErrorModels::new()
+fn error_models() -> OutputModels {
+    OutputModels::new()
         .add(
             0,
             AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0),

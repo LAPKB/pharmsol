@@ -4,7 +4,7 @@ use crate::simulator::equation::{AttachMetadataError, ModelMetadataError};
 use crate::simulator::Drift;
 use crate::SubjectBuilderExt;
 use crate::{fa, fetch_params, lag};
-use crate::{AssayErrorModels, ResidualErrorModel, ResidualErrorModels};
+use crate::{OutputModels, ResidualErrorModel};
 use pharmsol_dsl::ModelKind;
 
 fn simple_sde() -> SDE {
@@ -349,9 +349,9 @@ fn filter_subject() -> Subject {
         .build()
 }
 
-fn filter_error_models() -> AssayErrorModels {
+fn filter_error_models() -> OutputModels {
     use crate::data::error_model::{AssayErrorModel, ErrorPoly};
-    AssayErrorModels::new()
+    OutputModels::new()
         .add(
             0,
             AssayErrorModel::additive(ErrorPoly::new(0.5, 0.0, 0.0, 0.0), 0.0),
@@ -442,7 +442,7 @@ fn far_observation_has_finite_log_likelihood() {
     use crate::data::error_model::{AssayErrorModel, ErrorPoly};
     let sde = simple_sde();
     let subject = Subject::builder("far").observation(1.0, 1.0e6, 0).build();
-    let error_models = AssayErrorModels::new()
+    let error_models = OutputModels::new()
         .add(
             0,
             AssayErrorModel::additive(ErrorPoly::new(1.0e-3, 0.0, 0.0, 0.0), 0.0),
@@ -497,7 +497,7 @@ fn particles_the_data_rules_out_get_zero_weight() {
         .observation(1.0, 1.0e6, 0)
         .observation(2.0, 1.0, 0)
         .build();
-    let error_models = AssayErrorModels::new()
+    let error_models = OutputModels::new()
         .add(
             0,
             AssayErrorModel::additive(ErrorPoly::new(1.0e-200, 0.0, 0.0, 0.0), 0.0),
@@ -517,8 +517,10 @@ fn particles_the_data_rules_out_get_zero_weight() {
     assert_eq!(simulation.log_likelihood, Some(f64::NEG_INFINITY));
 }
 
-fn residual_error_models() -> ResidualErrorModels {
-    ResidualErrorModels::new().add(0, ResidualErrorModel::combined(0.2, 0.1))
+fn residual_error_models() -> OutputModels {
+    OutputModels::new()
+        .add(0, ResidualErrorModel::combined(0.2, 0.1))
+        .unwrap()
 }
 
 /// An infusion with no elimination and no diffusion: every particle follows
@@ -697,4 +699,41 @@ fn zero_diffusion_likelihood_matches_the_ode() {
             "SDE {sde_log_likelihood} vs ODE {ode_log_likelihood}"
         );
     }
+}
+
+#[test]
+fn heavy_tails_keep_an_outlier_from_ruling_out_every_particle() {
+    use crate::data::error_model::{AssayErrorModel, ErrorPoly};
+    use crate::{Family, OutputModel};
+
+    let sde = simple_sde().disable_cache();
+    let subject = Subject::builder("outlier")
+        .observation(1.0, 50.0, 0)
+        .build();
+    let assay = AssayErrorModel::additive(ErrorPoly::new(1.0e-3, 0.0, 0.0, 0.0), 0.0);
+
+    // Under a normal, an observation this far from every particle has zero
+    // likelihood.
+    let normal = OutputModels::new().add(0, assay.clone()).unwrap();
+    let normal_ll = sde.log_likelihood(&subject, &[1.0, 50.0], &normal).unwrap();
+    assert_eq!(normal_ll, f64::NEG_INFINITY);
+
+    // A t-distribution's polynomial tails still weigh the particles.
+    let student = OutputModels::new()
+        .add(
+            0,
+            OutputModel::new(assay).with_family(Family::student_t(3.0).unwrap()),
+        )
+        .unwrap();
+    let student_ll = sde
+        .log_likelihood(&subject, &[1.0, 50.0], &student)
+        .unwrap();
+    assert!(student_ll.is_finite());
+
+    let simulation = sde
+        .simulate(&subject, &[1.0, 50.0], Some(&student))
+        .unwrap();
+    assert_eq!(simulation.log_likelihood, Some(student_ll));
+    let weights = simulation.predictions.weights().unwrap();
+    assert!((weights.column(0).sum() - 1.0).abs() < 1e-12);
 }

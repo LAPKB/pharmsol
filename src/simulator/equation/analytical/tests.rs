@@ -1,6 +1,6 @@
 use super::*;
 use crate::simulator::equation::{AttachMetadataError, ModelMetadataError};
-use crate::AssayErrorModels;
+use crate::OutputModels;
 use crate::SubjectBuilderExt;
 use approx::assert_relative_eq;
 use diffsol::Vector;
@@ -168,7 +168,7 @@ fn log_likelihood_matrix_reuses_cached_predictions() {
         .observation(2.0, 3.5, 0)
         .build()]);
     let support_points = array![[0.2, 20.0], [0.3, 25.0]];
-    let error_models = AssayErrorModels::new()
+    let error_models = OutputModels::new()
         .add(
             0,
             AssayErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 0.5),

@@ -51,7 +51,7 @@ fn test_particle_filter_likelihood() {
         )
         .expect("particle filter metadata should validate");
 
-    let ems = AssayErrorModels::default()
+    let ems = OutputModels::default()
         .add(
             "cp",
             AssayErrorModel::additive(ErrorPoly::new(0.5, 0.0, 0.0, 0.0), 0.0),

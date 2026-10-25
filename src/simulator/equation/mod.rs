@@ -190,9 +190,9 @@ pub trait Equation: Clone + Send + Sync + 'static {
     ///
     /// Deterministic equations sum the log-density of each observation given
     /// its (possibly cached) prediction. An [`SDE`] returns its particle-filter
-    /// estimate. Pass [`crate::AssayErrorModels`] for observation-based sigma
-    /// (non-parametric algorithms) or [`crate::ResidualErrorModels`] for
-    /// prediction-based sigma (parametric algorithms).
+    /// estimate. Usually `observation_model` is a [`crate::OutputModels`],
+    /// whose outputs take sigma from the observation (assay error) or from
+    /// the prediction (residual error).
     ///
     /// Errors if `observation_model` names an output this equation does not
     /// declare, before simulating.

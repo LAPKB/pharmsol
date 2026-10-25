@@ -5,12 +5,10 @@
 //! through. Deterministic equations sum its log-density over their
 //! predictions; the SDE particle filter weights each particle with it.
 //!
-//! Two implementations ship with the crate:
-//!
-//! - [`AssayErrorModels`](crate::AssayErrorModels): sigma from the
-//!   **observation** (assay error), for non-parametric algorithms.
-//! - [`ResidualErrorModels`](crate::ResidualErrorModels): sigma from the
-//!   **prediction** (residual error), for parametric algorithms.
+//! The crate's implementation is [`OutputModels`](crate::OutputModels): one
+//! [`OutputModel`](crate::OutputModel) per output, each choosing where sigma
+//! comes from (observation or prediction), the distribution and the scale.
+//! Implement the trait yourself for anything those cannot express.
 
 use crate::data::event::OutputLabel;
 use crate::{Censor, ErrorPoly, PharmsolError};

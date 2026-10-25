@@ -1,17 +1,10 @@
-//! Residual error models for parametric algorithms (SAEM, FOCE, etc.)
+//! Residual error: sigma computed from the **prediction**.
 //!
-//! This module provides error model implementations that use the **prediction**
-//! (model output) rather than the **observation** for computing residual error.
-//!
-//! # Conceptual Difference from [`crate::ErrorModel`]
-//!
-//! - [`crate::ErrorModel`] (in `error_model.rs`): Represents **measurement/assay noise**.
-//!   Sigma is computed from the **observation** using polynomial characterization.
-//!   Used by non-parametric algorithms (NPAG, NPOD, etc.).
-//!
-//! - [`ResidualErrorModel`] (this module): Represents **residual unexplained variability**
-//!   in population models. Sigma is computed from the **prediction**.
-//!   Used by parametric algorithms (SAEM, FOCE, etc.).
+//! [`ResidualErrorModel`] is one of the two ways an [`OutputModel`](crate::OutputModel)
+//! computes sigma, the other being [`AssayErrorModel`](crate::AssayErrorModel),
+//! which computes it from the **observation**. Residual error represents
+//! unexplained variability in population models and is what parametric
+//! algorithms (SAEM, FOCE) usually estimate.
 //!
 //! # R saemix Correspondence
 //!
@@ -33,21 +26,16 @@
 //! - **Constant**: σ = a (independent of prediction)
 //! - **Proportional**: σ = b * |f| (scales with prediction)
 //! - **Combined**: σ = sqrt(a² + b²*f²) (most flexible, default in saemix)
-//! - **Exponential**: σ for log-transformed data
+//!
+//! Exponential error is a constant σ on log-transformed data:
+//! [`OutputModel::exponential`](crate::OutputModel::exponential).
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
-
-use crate::data::error_model::ErrorModelError;
-use crate::data::event::OutputLabel;
-use crate::simulator::likelihood::observation::finite;
-use crate::simulator::likelihood::ObservationModel;
-use crate::{Censor, ErrorPoly, PharmsolError};
 
 /// Residual error model for parametric estimation algorithms.
 ///
-/// Unlike [`crate::ErrorModel`] which uses observations, this uses
+/// Unlike [`crate::AssayErrorModel`], which uses observations, this uses
 /// the model **prediction** to compute the standard deviation.
 ///
 /// # Usage in SAEM
@@ -117,21 +105,6 @@ pub enum ResidualErrorModel {
         /// Proportional component (b)
         b: f64,
     },
-
-    /// Exponential error model (for log-transformed data)
-    ///
-    /// σ = σ_exp (constant on log scale)
-    ///
-    /// When data is analyzed on the log scale:
-    /// ```text
-    /// log(Y) = log(f) + ε, where ε ~ N(0, σ²)
-    /// ```
-    ///
-    /// This corresponds to multiplicative error on the original scale.
-    Exponential {
-        /// Error standard deviation on log scale
-        sigma: f64,
-    },
 }
 
 impl Default for ResidualErrorModel {
@@ -167,14 +140,6 @@ impl ResidualErrorModel {
         ResidualErrorModel::Combined { a, b }
     }
 
-    /// Create an exponential error model
-    ///
-    /// # Arguments
-    /// * `sigma` - Standard deviation on log scale
-    pub fn exponential(sigma: f64) -> Self {
-        ResidualErrorModel::Exponential { sigma }
-    }
-
     /// Compute sigma (standard deviation) for a given prediction
     ///
     /// # Arguments
@@ -190,7 +155,6 @@ impl ResidualErrorModel {
             ResidualErrorModel::Combined { a, b } => {
                 (a.powi(2) + b.powi(2) * prediction.powi(2)).sqrt()
             }
-            ResidualErrorModel::Exponential { sigma } => *sigma,
         };
 
         // Apply cutoff to prevent division by zero in likelihood
@@ -249,11 +213,6 @@ impl ResidualErrorModel {
                 let variance = (a.powi(2) + b.powi(2) * prediction.powi(2)).max(f64::EPSILON);
                 residual_sq / variance
             }
-            ResidualErrorModel::Exponential { .. } => {
-                // Exponential: residuals on log scale
-                // This should be computed differently for log-transformed data
-                residual_sq
-            }
         }
     }
 
@@ -300,9 +259,6 @@ impl ResidualErrorModel {
                 // This is a simplification - full estimation would estimate both
                 ResidualErrorModel::Combined { a: new_sigma, b }
             }
-            ResidualErrorModel::Exponential { .. } => {
-                ResidualErrorModel::Exponential { sigma: new_sigma }
-            }
         }
     }
 
@@ -311,13 +267,11 @@ impl ResidualErrorModel {
     /// For Constant: returns a
     /// For Proportional: returns b
     /// For Combined: returns a (additive component)
-    /// For Exponential: returns sigma
     pub fn primary_parameter(&self) -> f64 {
         match self {
             ResidualErrorModel::Constant { a } => *a,
             ResidualErrorModel::Proportional { b } => *b,
             ResidualErrorModel::Combined { a, .. } => *a,
-            ResidualErrorModel::Exponential { sigma } => *sigma,
         }
     }
 
@@ -335,182 +289,18 @@ impl ResidualErrorModel {
     pub fn is_combined(&self) -> bool {
         matches!(self, ResidualErrorModel::Combined { .. })
     }
-
-    /// Check if this is an exponential error model
-    pub fn is_exponential(&self) -> bool {
-        matches!(self, ResidualErrorModel::Exponential { .. })
-    }
 }
 
-/// Collection of residual error models, keyed by output label.
-///
-/// This mirrors [`crate::AssayErrorModels`] but for parametric algorithms.
-///
-/// Labels match an equation's declared output names exactly: `"1"` matches an
-/// output declared as `1`, never a position. Equations without metadata
-/// declare no output names; their outputs are labeled by position (`"0"`,
-/// `"1"`, ...), like the observation labels resolved against them.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
-#[serde(transparent)]
-pub struct ResidualErrorModels {
-    models: BTreeMap<OutputLabel, ResidualErrorModel>,
-}
-
-impl ResidualErrorModels {
-    /// Create an empty collection
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Add an error model for an output label.
-    ///
-    /// Adding a second model for the same label replaces the first.
-    pub fn add(mut self, outeq: impl ToString, model: ResidualErrorModel) -> Self {
-        self.models.insert(OutputLabel::new(outeq), model);
-        self
-    }
-
-    /// Get the error model for an output label
-    pub fn get(&self, outeq: impl ToString) -> Option<&ResidualErrorModel> {
-        self.models.get(outeq.to_string().as_str())
-    }
-
-    /// Get a mutable reference to the error model for an output label
-    pub fn get_mut(&mut self, outeq: impl ToString) -> Option<&mut ResidualErrorModel> {
-        self.models.get_mut(outeq.to_string().as_str())
-    }
-
-    /// Whether an error model was added for this output label
-    pub fn contains(&self, outeq: impl ToString) -> bool {
-        self.models.contains_key(outeq.to_string().as_str())
-    }
-
-    /// Compute sigma for an output label and prediction
-    pub fn sigma(&self, outeq: impl ToString, prediction: f64) -> Option<f64> {
-        self.get(outeq).map(|m| m.sigma(prediction))
-    }
-
-    /// Number of error models
-    pub fn len(&self) -> usize {
-        self.models.len()
-    }
-
-    /// Check if collection is empty
-    pub fn is_empty(&self) -> bool {
-        self.models.is_empty()
-    }
-
-    /// Iterate over `(label, model)` pairs, in label order
-    pub fn iter(&self) -> impl Iterator<Item = (&OutputLabel, &ResidualErrorModel)> {
-        self.models.iter()
-    }
-
-    /// Iterate mutably over `(label, model)` pairs, in label order
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&OutputLabel, &mut ResidualErrorModel)> {
-        self.models.iter_mut()
-    }
-
-    /// Iterate over the output labels that have an error model
-    pub fn labels(&self) -> impl Iterator<Item = &OutputLabel> {
-        self.models.keys()
-    }
-
-    /// Compute log-likelihood for a single observation given its prediction
-    ///
-    /// # Arguments
-    /// * `outeq` - Output label
-    /// * `observation` - The observed value (y)
-    /// * `prediction` - The model prediction (f)
-    ///
-    /// # Returns
-    /// The log-likelihood contribution, or None if no model exists for `outeq`.
-    pub fn log_likelihood(
-        &self,
-        outeq: impl ToString,
-        observation: f64,
-        prediction: f64,
-    ) -> Option<f64> {
-        self.get(outeq)
-            .map(|m| m.log_likelihood(observation, prediction))
-    }
-
-    /// Compute total log-likelihood for multiple observation-prediction pairs
-    ///
-    /// # Arguments
-    /// * `obs_pred_pairs` - Iterator of (output label, observation, prediction) tuples
-    ///
-    /// # Returns
-    /// The sum of log-likelihood contributions. Returns `f64::NEG_INFINITY` if any
-    /// output label has no model.
-    pub fn total_log_likelihood<I, L>(&self, obs_pred_pairs: I) -> f64
-    where
-        I: IntoIterator<Item = (L, f64, f64)>,
-        L: AsRef<str>,
-    {
-        let mut total = 0.0;
-        for (outeq, obs, pred) in obs_pred_pairs {
-            match self.models.get(outeq.as_ref()) {
-                Some(model) => total += model.log_likelihood(obs, pred),
-                None => return f64::NEG_INFINITY,
-            }
-        }
-        total
-    }
-
-    /// Update all models with a new sigma estimate
-    pub fn update_sigma(&mut self, new_sigma: f64) {
-        for model in self.models.values_mut() {
-            *model = model.with_updated_sigma(new_sigma);
-        }
-    }
-}
-
-/// Tag mixed into [`ResidualErrorModels`] cache keys, so they never collide
-/// with another observation model's.
-const RESIDUAL_CACHE_TAG: u64 = 0x7265_7369_6400_0001;
-
-impl ObservationModel for ResidualErrorModels {
-    /// Normal density with sigma from the prediction.
-    ///
-    /// Censoring and the observation's error polynomial are ignored: a
-    /// censored observation is scored as if its limit had been measured.
-    #[inline]
-    fn log_density(
-        &self,
-        outeq: &OutputLabel,
-        observation: f64,
-        prediction: f64,
-        _censoring: Censor,
-        _errorpoly: Option<ErrorPoly>,
-    ) -> Result<f64, PharmsolError> {
-        let model = self
-            .models
-            .get(outeq.as_str())
-            .ok_or_else(|| ErrorModelError::UnknownOutputLabel(outeq.to_string()))?;
-        finite(model.log_likelihood(observation, prediction))
-    }
-
-    fn labels(&self) -> Box<dyn Iterator<Item = &OutputLabel> + '_> {
-        Box::new(self.models.keys())
-    }
-
-    fn cache_key(&self) -> u64 {
-        let mut hasher = ahash::AHasher::default();
-        RESIDUAL_CACHE_TAG.hash(&mut hasher);
-        for (label, model) in &self.models {
-            label.hash(&mut hasher);
-            let (variant, a, b) = match *model {
-                ResidualErrorModel::Constant { a } => (0u8, a, 0.0),
-                ResidualErrorModel::Proportional { b } => (1, 0.0, b),
-                ResidualErrorModel::Combined { a, b } => (2, a, b),
-                ResidualErrorModel::Exponential { sigma } => (3, sigma, 0.0),
-            };
-            variant.hash(&mut hasher);
-            a.to_bits().hash(&mut hasher);
-            b.to_bits().hash(&mut hasher);
-        }
-        hasher.finish()
-    }
+/// Hash a residual error model's variant and parameters.
+pub(crate) fn hash_model<H: Hasher>(hasher: &mut H, model: &ResidualErrorModel) {
+    let (variant, a, b) = match *model {
+        ResidualErrorModel::Constant { a } => (0u8, a, 0.0),
+        ResidualErrorModel::Proportional { b } => (1, 0.0, b),
+        ResidualErrorModel::Combined { a, b } => (2, a, b),
+    };
+    variant.hash(hasher);
+    a.to_bits().hash(hasher);
+    b.to_bits().hash(hasher);
 }
 
 #[cfg(test)]
@@ -573,40 +363,5 @@ mod tests {
         let ll = model.log_likelihood(1.0, 0.0);
         let expected = -0.5 * (std::f64::consts::TAU.ln() + 1.0);
         assert!((ll - expected).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_residual_error_models_collection() {
-        let models = ResidualErrorModels::new()
-            .add("cp", ResidualErrorModel::constant(0.5))
-            .add("effect", ResidualErrorModel::proportional(0.1));
-        assert_eq!(models.len(), 2);
-        assert!(models.get("cp").unwrap().is_constant());
-        assert!(models.get("effect").unwrap().is_proportional());
-        assert!((models.sigma("cp", 100.0).unwrap() - 0.5).abs() < 1e-10);
-        assert!((models.sigma("effect", 100.0).unwrap() - 10.0).abs() < 1e-10);
-        assert!(models.sigma("missing", 100.0).is_none());
-    }
-
-    #[test]
-    fn test_residual_error_models_total_log_likelihood_by_label() {
-        let models = ResidualErrorModels::new().add("cp", ResidualErrorModel::constant(1.0));
-        let expected = models.log_likelihood("cp", 1.0, 0.0).unwrap() * 2.0;
-        let total = models.total_log_likelihood([("cp", 1.0, 0.0), ("cp", 1.0, 0.0)]);
-        assert!((total - expected).abs() < 1e-12);
-        assert_eq!(
-            models.total_log_likelihood([("effect", 1.0, 0.0)]),
-            f64::NEG_INFINITY
-        );
-    }
-
-    #[test]
-    fn test_residual_error_models_update_sigma() {
-        let mut models = ResidualErrorModels::new()
-            .add("cp", ResidualErrorModel::constant(0.5))
-            .add("effect", ResidualErrorModel::proportional(0.1));
-        models.update_sigma(2.0);
-        assert_eq!(models.get("cp").unwrap().primary_parameter(), 2.0);
-        assert_eq!(models.get("effect").unwrap().primary_parameter(), 2.0);
     }
 }

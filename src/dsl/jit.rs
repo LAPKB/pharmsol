@@ -2436,7 +2436,7 @@ model analytical_mixed {
 
     #[test]
     fn jit_and_native_sde_particle_filters_agree() {
-        use crate::{AssayErrorModel, AssayErrorModels, ErrorPoly};
+        use crate::{AssayErrorModel, ErrorPoly, OutputModels};
 
         let model = load_corpus_model("vanco_sde");
         let jit = compile_sde_model_to_jit(&model)
@@ -2495,7 +2495,7 @@ model analytical_mixed {
             .observation(2.0, 0.045, "cp")
             .observation(4.0, 0.03, "cp")
             .build();
-        let error_models = AssayErrorModels::new()
+        let error_models = OutputModels::new()
             .add(
                 "cp",
                 AssayErrorModel::additive(ErrorPoly::new(0.01, 0.0, 0.0, 0.0), 0.0),

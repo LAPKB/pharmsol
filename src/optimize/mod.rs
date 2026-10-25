@@ -5,7 +5,7 @@
 //! - [`effect`] — Find maximum effects for two- and three-site Greco response
 //!   surfaces via Nelder‑Mead optimization in log‑space.
 //! - [`parameters`] — Nelder‑Mead parameter refinement for an [`Equation`]
-//!   against a [`Data`] set and [`AssayErrorModels`].
+//!   against a [`Data`] set and [`OutputModels`].
 
 pub mod effect;
 pub mod parameters;

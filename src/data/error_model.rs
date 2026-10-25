@@ -1,15 +1,6 @@
-use std::{
-    collections::BTreeMap,
-    hash::{Hash, Hasher},
-};
+use std::hash::{Hash, Hasher};
 
-use crate::simulator::likelihood::distributions::{lognormccdf, lognormcdf, lognormpdf};
-use crate::simulator::likelihood::observation::finite;
-use crate::{
-    data::event::OutputLabel,
-    simulator::likelihood::{ObservationModel, Prediction},
-    Censor, PharmsolError,
-};
+use crate::simulator::likelihood::Prediction;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -127,54 +118,8 @@ impl ErrorPoly {
     }
 }
 
-/// Collection of assay/measurement error models, keyed by output label.
-///
-/// This struct represents **measurement/assay noise** - the error associated with
-/// quantification of drug concentration in biological samples. Sigma is computed
-/// from the **observation** value.
-///
-/// Used by non-parametric algorithms (NPAG, NPOD, etc.).
-///
-/// For parametric algorithms (SAEM, FOCE), use [`crate::ResidualErrorModels`] instead,
-/// which computes sigma from the **prediction**.
-///
-/// Every model is addressed by the output label it was added for. Labels match
-/// an equation's declared output names exactly: `"1"` matches an output
-/// declared as `1`, and `"cp"` an output declared as `cp`. Equations without
-/// metadata declare no output names; their outputs are labeled by position
-/// (`"0"`, `"1"`, ...), like the observation labels resolved against them.
-///
-/// ```rust
-/// # use pharmsol::prelude::*;
-/// let mut error_models = AssayErrorModels::new()
-///     .add("cp", AssayErrorModel::additive(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.5))?;
-///
-/// for (label, model) in error_models.iter_mut() {
-///     if model.optimize() {
-///         model.set_factor(model.factor()? * 2.0);
-///     }
-///     assert_eq!(label.as_str(), "cp");
-/// }
-/// assert_eq!(error_models.factor("cp")?, 1.0);
-/// # Ok::<(), pharmsol::data::error_model::ErrorModelError>(())
-/// ```
-#[derive(Serialize, Debug, Clone, Deserialize, Default, PartialEq)]
-#[serde(transparent)]
-pub struct AssayErrorModels {
-    models: BTreeMap<OutputLabel, AssayErrorModel>,
-}
-
-/// Deprecated alias for [`AssayErrorModels`].
-///
-/// This type alias is provided for backward compatibility.
-/// New code should use [`AssayErrorModels`] directly.
-#[deprecated(
-    since = "0.23.0",
-    note = "Use AssayErrorModels instead. ErrorModels has been renamed to better reflect its purpose (assay/measurement error)."
-)]
-pub type ErrorModels = AssayErrorModels;
-
-fn hash_model<H: Hasher>(hasher: &mut H, model: &AssayErrorModel) {
+/// Hash an assay error model, including whether its factor is fixed.
+pub(crate) fn hash_model<H: Hasher>(hasher: &mut H, model: &AssayErrorModel) {
     match model {
         AssayErrorModel::Additive { lambda, poly } => {
             0u8.hash(hasher);
@@ -200,301 +145,6 @@ fn hash_poly<H: Hasher>(hasher: &mut H, poly: &ErrorPoly) {
     let (c0, c1, c2, c3) = poly.coefficients();
     for coefficient in [c0, c1, c2, c3] {
         coefficient.to_bits().hash(hasher);
-    }
-}
-
-impl AssayErrorModels {
-    /// Create an empty [`AssayErrorModels`].
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Add an error model for an output label.
-    ///
-    /// # Arguments
-    /// * `outeq` - The output label, matched exactly against the model's declared outputs.
-    /// * `model` - The [AssayErrorModel] to add for that output.
-    /// # Returns
-    /// A new instance of AssayErrorModels with the added model.
-    /// # Errors
-    /// [ErrorModelError::ExistingOutputLabel] if a model already exists for that label.
-    pub fn add(
-        mut self,
-        outeq: impl ToString,
-        model: AssayErrorModel,
-    ) -> Result<Self, ErrorModelError> {
-        let label = OutputLabel::new(outeq);
-        if self.models.contains_key(&label) {
-            return Err(ErrorModelError::ExistingOutputLabel(label.to_string()));
-        }
-        self.models.insert(label, model);
-        Ok(self)
-    }
-
-    /// Get the error model for an output label, if one was added.
-    pub fn get(&self, outeq: impl ToString) -> Option<&AssayErrorModel> {
-        self.models.get(outeq.to_string().as_str())
-    }
-
-    /// Get a mutable reference to the error model for an output label, if one was added.
-    pub fn get_mut(&mut self, outeq: impl ToString) -> Option<&mut AssayErrorModel> {
-        self.models.get_mut(outeq.to_string().as_str())
-    }
-
-    /// Whether an error model was added for this output label.
-    pub fn contains(&self, outeq: impl ToString) -> bool {
-        self.models.contains_key(outeq.to_string().as_str())
-    }
-
-    /// Get the error model for an output label.
-    ///
-    /// # Errors
-    /// [ErrorModelError::UnknownOutputLabel] if no model was added for that label.
-    pub fn error_model(&self, outeq: impl ToString) -> Result<&AssayErrorModel, ErrorModelError> {
-        let label = outeq.to_string();
-        self.models
-            .get(label.as_str())
-            .ok_or(ErrorModelError::UnknownOutputLabel(label))
-    }
-
-    /// The error model for `label`, which must exist and not be [AssayErrorModel::None].
-    ///
-    /// Looks the label up as a `&str`, so the likelihood path never allocates.
-    #[inline]
-    fn defined_label(&self, label: &str) -> Result<&AssayErrorModel, ErrorModelError> {
-        match self.models.get(label) {
-            None => Err(ErrorModelError::UnknownOutputLabel(label.to_string())),
-            Some(AssayErrorModel::None) => Err(ErrorModelError::NoneErrorModel(label.to_string())),
-            Some(model) => Ok(model),
-        }
-    }
-
-    /// [`Self::defined_label`] for any label-like value.
-    fn defined(&self, outeq: impl ToString) -> Result<&AssayErrorModel, ErrorModelError> {
-        self.defined_label(&outeq.to_string())
-    }
-
-    /// Mutable variant of [`Self::defined`].
-    fn defined_mut(
-        &mut self,
-        outeq: impl ToString,
-    ) -> Result<&mut AssayErrorModel, ErrorModelError> {
-        let label = outeq.to_string();
-        match self.models.get_mut(label.as_str()) {
-            None => Err(ErrorModelError::UnknownOutputLabel(label)),
-            Some(AssayErrorModel::None) => Err(ErrorModelError::NoneErrorModel(label)),
-            Some(model) => Ok(model),
-        }
-    }
-
-    /// Iterate over `(label, model)` pairs, in label order.
-    pub fn iter(&self) -> impl Iterator<Item = (&OutputLabel, &AssayErrorModel)> {
-        self.models.iter()
-    }
-
-    /// Iterate mutably over `(label, model)` pairs, in label order.
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&OutputLabel, &mut AssayErrorModel)> {
-        self.models.iter_mut()
-    }
-
-    /// Iterate over the output labels that have an error model.
-    pub fn labels(&self) -> impl Iterator<Item = &OutputLabel> {
-        self.models.keys()
-    }
-
-    /// Computes a hash for the error models collection.
-    /// This hash is based on the output labels and their associated error models.
-    /// # Returns
-    /// A `u64` hash value representing the error models collection.
-    pub fn hash(&self) -> u64 {
-        let mut hasher = ahash::AHasher::default();
-        for (label, model) in &self.models {
-            label.hash(&mut hasher);
-            hash_model(&mut hasher, model);
-        }
-        hasher.finish()
-    }
-
-    /// Returns the number of error models in the collection.
-    pub fn len(&self) -> usize {
-        self.models.len()
-    }
-
-    /// Returns whether the collection contains no error models.
-    pub fn is_empty(&self) -> bool {
-        self.models.is_empty()
-    }
-
-    /// Returns the error polynomial for an output label.
-    pub fn errorpoly(&self, outeq: impl ToString) -> Result<ErrorPoly, ErrorModelError> {
-        self.defined(outeq)?.errorpoly()
-    }
-
-    /// Returns the factor value (gamma or lambda) for an output label.
-    pub fn factor(&self, outeq: impl ToString) -> Result<f64, ErrorModelError> {
-        self.defined(outeq)?.factor()
-    }
-
-    /// Sets the error polynomial for an output label.
-    pub fn set_errorpoly(
-        &mut self,
-        outeq: impl ToString,
-        poly: ErrorPoly,
-    ) -> Result<(), ErrorModelError> {
-        self.defined_mut(outeq)?.set_errorpoly(poly);
-        Ok(())
-    }
-
-    /// Sets the factor value (gamma or lambda) for an output label.
-    pub fn set_factor(&mut self, outeq: impl ToString, factor: f64) -> Result<(), ErrorModelError> {
-        self.defined_mut(outeq)?.set_factor(factor);
-        Ok(())
-    }
-
-    /// Gets the factor parameter (including fixed/variable state) for an output label.
-    pub fn factor_param(&self, outeq: impl ToString) -> Result<Factor, ErrorModelError> {
-        self.defined(outeq)?.factor_param()
-    }
-
-    /// Sets the factor parameter (including fixed/variable state) for an output label.
-    pub fn set_factor_param(
-        &mut self,
-        outeq: impl ToString,
-        param: Factor,
-    ) -> Result<(), ErrorModelError> {
-        self.defined_mut(outeq)?.set_factor_param(param);
-        Ok(())
-    }
-
-    /// Checks if the factor parameter is fixed for an output label.
-    pub fn is_factor_fixed(&self, outeq: impl ToString) -> Result<bool, ErrorModelError> {
-        self.defined(outeq)?.is_factor_fixed()
-    }
-
-    /// Makes the factor parameter fixed at its current value for an output label.
-    pub fn fix_factor(&mut self, outeq: impl ToString) -> Result<(), ErrorModelError> {
-        self.defined_mut(outeq)?.fix_factor();
-        Ok(())
-    }
-
-    /// Makes the factor parameter variable at its current value for an output label.
-    pub fn unfix_factor(&mut self, outeq: impl ToString) -> Result<(), ErrorModelError> {
-        self.defined_mut(outeq)?.unfix_factor();
-        Ok(())
-    }
-
-    /// Whether the error model for an output label is proportional.
-    pub fn is_proportional(&self, outeq: impl ToString) -> bool {
-        self.get(outeq)
-            .is_some_and(AssayErrorModel::is_proportional)
-    }
-
-    /// Whether the error model for an output label is additive.
-    pub fn is_additive(&self, outeq: impl ToString) -> bool {
-        self.get(outeq).is_some_and(AssayErrorModel::is_additive)
-    }
-
-    /// Computes the standard deviation (sigma) for a prediction, using the
-    /// error model of the prediction's output label.
-    ///
-    /// This always uses the **observation** value to compute sigma, which is appropriate
-    /// for non-parametric algorithms (NPAG, NPOD). For parametric algorithms (SAEM, FOCE),
-    /// use [`crate::ResidualErrorModels`] instead, which computes sigma from the prediction.
-    #[inline]
-    pub fn sigma(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
-        self.defined_label(prediction.outeq().as_str())?
-            .sigma(prediction)
-    }
-
-    /// Computes the variance for a prediction, using the error model of the
-    /// prediction's output label.
-    pub fn variance(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
-        self.defined_label(prediction.outeq().as_str())?
-            .variance(prediction)
-    }
-
-    /// Computes the standard deviation (sigma) for an output label and value.
-    pub fn sigma_from_value(
-        &self,
-        outeq: impl ToString,
-        value: f64,
-    ) -> Result<f64, ErrorModelError> {
-        self.defined(outeq)?.sigma_from_value(value)
-    }
-
-    /// Computes the variance for an output label and value.
-    pub fn variance_from_value(
-        &self,
-        outeq: impl ToString,
-        value: f64,
-    ) -> Result<f64, ErrorModelError> {
-        self.defined(outeq)?.variance_from_value(value)
-    }
-}
-
-/// Tag mixed into [`AssayErrorModels`] cache keys, so they never collide with
-/// another observation model's.
-const ASSAY_CACHE_TAG: u64 = 0x6173_7361_7900_0001;
-
-impl ObservationModel for AssayErrorModels {
-    /// Normal density with sigma from the observed value; censored
-    /// observations use the normal CDF (BLOQ) or survival function (ALOQ).
-    #[inline]
-    fn log_density(
-        &self,
-        outeq: &OutputLabel,
-        observation: f64,
-        prediction: f64,
-        censoring: Censor,
-        errorpoly: Option<ErrorPoly>,
-    ) -> Result<f64, PharmsolError> {
-        let sigma = self
-            .defined_label(outeq.as_str())?
-            .sigma_for(observation, errorpoly)?;
-        let log_density = match censoring {
-            Censor::None => lognormpdf(observation, prediction, sigma),
-            Censor::BLOQ => lognormcdf(observation, prediction, sigma)?,
-            Censor::ALOQ => lognormccdf(observation, prediction, sigma)?,
-        };
-        finite(log_density)
-    }
-
-    fn labels(&self) -> Box<dyn Iterator<Item = &OutputLabel> + '_> {
-        Box::new(self.models.keys())
-    }
-
-    fn cache_key(&self) -> u64 {
-        let mut hasher = ahash::AHasher::default();
-        ASSAY_CACHE_TAG.hash(&mut hasher);
-        self.hash().hash(&mut hasher);
-        hasher.finish()
-    }
-}
-
-impl IntoIterator for AssayErrorModels {
-    type Item = (OutputLabel, AssayErrorModel);
-    type IntoIter = std::collections::btree_map::IntoIter<OutputLabel, AssayErrorModel>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.models.into_iter()
-    }
-}
-
-impl<'a> IntoIterator for &'a AssayErrorModels {
-    type Item = (&'a OutputLabel, &'a AssayErrorModel);
-    type IntoIter = std::collections::btree_map::Iter<'a, OutputLabel, AssayErrorModel>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.models.iter()
-    }
-}
-
-impl<'a> IntoIterator for &'a mut AssayErrorModels {
-    type Item = (&'a OutputLabel, &'a mut AssayErrorModel);
-    type IntoIter = std::collections::btree_map::IterMut<'a, OutputLabel, AssayErrorModel>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.models.iter_mut()
     }
 }
 
@@ -891,11 +541,19 @@ pub enum ErrorModelError {
     NoneErrorModel(String),
     #[error("The prediction does not have an observation associated with it")]
     MissingObservation,
+    #[error("The error model for output `{0}` takes sigma from the prediction, not from an assay error polynomial")]
+    NotAssayError(String),
+    #[error("A log-transformed observation must be positive, got {0}")]
+    NonPositiveObservation(f64),
+    #[error("Invalid distribution: {0}")]
+    InvalidFamily(String),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::event::OutputLabel;
+    use crate::data::output_model::{OutputModel, OutputModels};
     use crate::{Censor, Observation};
 
     #[test]
@@ -956,20 +614,20 @@ mod tests {
 
     #[test]
     fn test_error_models_new() {
-        let models = AssayErrorModels::new();
+        let models = OutputModels::new();
         assert_eq!(models.len(), 0);
     }
 
     #[test]
     fn test_error_models_default() {
-        let models = AssayErrorModels::default();
+        let models = OutputModels::default();
         assert_eq!(models.len(), 0);
     }
 
     #[test]
     fn test_error_models_add_single() {
         let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = AssayErrorModels::new().add(0, model).unwrap();
+        let models = OutputModels::new().add(0, model).unwrap();
         assert_eq!(models.len(), 1);
     }
 
@@ -978,7 +636,7 @@ mod tests {
         let model1 = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let model2 = AssayErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
 
-        let models = AssayErrorModels::new()
+        let models = OutputModels::new()
             .add(0, model1)
             .unwrap()
             .add(1, model2)
@@ -989,7 +647,7 @@ mod tests {
 
     #[test]
     fn test_error_models_duplicate_label_fails() {
-        let result = AssayErrorModels::new()
+        let result = OutputModels::new()
             .add(
                 "cp",
                 AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
@@ -1008,7 +666,7 @@ mod tests {
 
     #[test]
     fn test_error_models_sigma_uses_prediction_label() {
-        let models = AssayErrorModels::new()
+        let models = OutputModels::new()
             .add(
                 "cp",
                 AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
@@ -1032,10 +690,7 @@ mod tests {
         let model1 = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let model2 = AssayErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
 
-        let result = AssayErrorModels::new()
-            .add(0, model1)
-            .unwrap()
-            .add(0, model2); // Same outeq should fail
+        let result = OutputModels::new().add(0, model1).unwrap().add(0, model2); // Same outeq should fail
 
         assert!(result.is_err());
         match result {
@@ -1047,7 +702,7 @@ mod tests {
     #[test]
     fn test_error_models_factor() {
         let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = AssayErrorModels::new().add(0, model).unwrap();
+        let models = OutputModels::new().add(0, model).unwrap();
 
         assert_eq!(models.factor(0).unwrap(), 5.0);
     }
@@ -1055,7 +710,7 @@ mod tests {
     #[test]
     fn test_error_models_factor_unknown_label() {
         let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = AssayErrorModels::new().add(0, model).unwrap();
+        let models = OutputModels::new().add(0, model).unwrap();
 
         let result = models.factor(1);
         assert!(result.is_err());
@@ -1068,7 +723,7 @@ mod tests {
     #[test]
     fn test_error_models_set_factor() {
         let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let mut models = AssayErrorModels::new().add(0, model).unwrap();
+        let mut models = OutputModels::new().add(0, model).unwrap();
 
         assert_eq!(models.factor(0).unwrap(), 5.0);
         models.set_factor(0, 10.0).unwrap();
@@ -1078,7 +733,7 @@ mod tests {
     #[test]
     fn test_error_models_set_factor_unknown_label() {
         let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let mut models = AssayErrorModels::new().add(0, model).unwrap();
+        let mut models = OutputModels::new().add(0, model).unwrap();
 
         let result = models.set_factor(1, 10.0);
         assert!(result.is_err());
@@ -1092,7 +747,7 @@ mod tests {
     fn test_error_models_errorpoly() {
         let poly = ErrorPoly::new(1.0, 2.0, 3.0, 4.0);
         let model = AssayErrorModel::additive(poly, 5.0);
-        let models = AssayErrorModels::new().add(0, model).unwrap();
+        let models = OutputModels::new().add(0, model).unwrap();
 
         let retrieved_poly = models.errorpoly(0).unwrap();
         assert_eq!(retrieved_poly.coefficients(), (1.0, 2.0, 3.0, 4.0));
@@ -1101,7 +756,7 @@ mod tests {
     #[test]
     fn test_error_models_errorpoly_unknown_label() {
         let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = AssayErrorModels::new().add(0, model).unwrap();
+        let models = OutputModels::new().add(0, model).unwrap();
 
         let result = models.errorpoly(1);
         assert!(result.is_err());
@@ -1116,7 +771,7 @@ mod tests {
         let poly1 = ErrorPoly::new(1.0, 2.0, 3.0, 4.0);
         let poly2 = ErrorPoly::new(5.0, 6.0, 7.0, 8.0);
         let model = AssayErrorModel::additive(poly1, 5.0);
-        let mut models = AssayErrorModels::new().add(0, model).unwrap();
+        let mut models = OutputModels::new().add(0, model).unwrap();
 
         assert_eq!(
             models.errorpoly(0).unwrap().coefficients(),
@@ -1132,7 +787,7 @@ mod tests {
     #[test]
     fn test_error_models_set_errorpoly_unknown_label() {
         let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let mut models = AssayErrorModels::new().add(0, model).unwrap();
+        let mut models = OutputModels::new().add(0, model).unwrap();
 
         let result = models.set_errorpoly(1, ErrorPoly::new(5.0, 6.0, 7.0, 8.0));
         assert!(result.is_err());
@@ -1145,7 +800,7 @@ mod tests {
     #[test]
     fn test_error_models_sigma() {
         let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = AssayErrorModels::new().add(0, model).unwrap();
+        let models = OutputModels::new().add(0, model).unwrap();
 
         let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
         let prediction = observation.to_prediction(10.0, vec![]);
@@ -1158,7 +813,7 @@ mod tests {
     #[test]
     fn test_error_models_sigma_unknown_label() {
         let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = AssayErrorModels::new().add(0, model).unwrap();
+        let models = OutputModels::new().add(0, model).unwrap();
 
         let observation = Observation::new(0.0, Some(20.0), 1, None, 0, Censor::None); // outeq=1 not in models
         let prediction = observation.to_prediction(10.0, vec![]);
@@ -1174,7 +829,7 @@ mod tests {
     #[test]
     fn test_error_models_variance() {
         let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = AssayErrorModels::new().add(0, model).unwrap();
+        let models = OutputModels::new().add(0, model).unwrap();
 
         let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
         let prediction = observation.to_prediction(10.0, vec![]);
@@ -1187,7 +842,7 @@ mod tests {
     #[test]
     fn test_error_models_variance_unknown_label() {
         let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = AssayErrorModels::new().add(0, model).unwrap();
+        let models = OutputModels::new().add(0, model).unwrap();
 
         let observation = Observation::new(0.0, Some(20.0), 1, None, 0, Censor::None); // outeq=1 not in models
         let prediction = observation.to_prediction(10.0, vec![]);
@@ -1203,7 +858,7 @@ mod tests {
     #[test]
     fn test_error_models_sigma_from_value() {
         let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = AssayErrorModels::new().add(0, model).unwrap();
+        let models = OutputModels::new().add(0, model).unwrap();
 
         let sigma = models.sigma_from_value(0, 20.0).unwrap();
         assert_eq!(sigma, (26.0_f64).sqrt());
@@ -1212,7 +867,7 @@ mod tests {
     #[test]
     fn test_error_models_sigma_from_value_unknown_label() {
         let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = AssayErrorModels::new().add(0, model).unwrap();
+        let models = OutputModels::new().add(0, model).unwrap();
 
         let result = models.sigma_from_value(1, 20.0);
         assert!(result.is_err());
@@ -1225,7 +880,7 @@ mod tests {
     #[test]
     fn test_error_models_variance_from_value() {
         let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = AssayErrorModels::new().add(0, model).unwrap();
+        let models = OutputModels::new().add(0, model).unwrap();
 
         let variance = models.variance_from_value(0, 20.0).unwrap();
         let expected_sigma = (26.0_f64).sqrt();
@@ -1235,7 +890,7 @@ mod tests {
     #[test]
     fn test_error_models_variance_from_value_unknown_label() {
         let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = AssayErrorModels::new().add(0, model).unwrap();
+        let models = OutputModels::new().add(0, model).unwrap();
 
         let result = models.variance_from_value(1, 20.0);
         assert!(result.is_err());
@@ -1250,13 +905,13 @@ mod tests {
         let model1 = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let model2 = AssayErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
 
-        let models1 = AssayErrorModels::new()
+        let models1 = OutputModels::new()
             .add(0, model1.clone())
             .unwrap()
             .add(1, model2.clone())
             .unwrap();
 
-        let models2 = AssayErrorModels::new()
+        let models2 = OutputModels::new()
             .add(0, model1)
             .unwrap()
             .add(1, model2)
@@ -1272,13 +927,13 @@ mod tests {
         let model2 = AssayErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
 
         // Add in different orders
-        let models1 = AssayErrorModels::new()
+        let models1 = OutputModels::new()
             .add(0, model1.clone())
             .unwrap()
             .add(1, model2.clone())
             .unwrap();
 
-        let models2 = AssayErrorModels::new()
+        let models2 = OutputModels::new()
             .add(1, model2)
             .unwrap()
             .add(0, model1)
@@ -1294,7 +949,7 @@ mod tests {
         let proportional_model =
             AssayErrorModel::proportional(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.1);
 
-        let models = AssayErrorModels::new()
+        let models = OutputModels::new()
             .add(0, additive_model)
             .unwrap()
             .add(1, proportional_model)
@@ -1323,7 +978,7 @@ mod tests {
         let proportional_model =
             AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
 
-        let models = AssayErrorModels::new()
+        let models = OutputModels::new()
             .add(0, additive_model)
             .unwrap()
             .add(1, proportional_model)
@@ -1443,7 +1098,7 @@ mod tests {
         let proportional_model =
             AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
 
-        let mut models = AssayErrorModels::new()
+        let mut models = OutputModels::new()
             .add(0, additive_model)
             .unwrap()
             .add(1, proportional_model)
@@ -1503,8 +1158,8 @@ mod tests {
         let model1_variable = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let model1_fixed = AssayErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
 
-        let models1 = AssayErrorModels::new().add(0, model1_variable).unwrap();
-        let models2 = AssayErrorModels::new().add(0, model1_fixed).unwrap();
+        let models1 = OutputModels::new().add(0, model1_variable).unwrap();
+        let models2 = OutputModels::new().add(0, model1_fixed).unwrap();
 
         // Different fixed/variable states should produce different hashes
         assert_ne!(models1.hash(), models2.hash());
@@ -1516,7 +1171,7 @@ mod tests {
         let proportional_model =
             AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
 
-        let mut models = AssayErrorModels::new()
+        let mut models = OutputModels::new()
             .add(0, additive_model)
             .unwrap()
             .add(1, proportional_model)
@@ -1531,8 +1186,8 @@ mod tests {
         // First iteration: update values using iter_mut
         for (outeq, model) in models.iter_mut() {
             match outeq.as_str() {
-                "0" => model.set_factor(10.0), // Update additive lambda from 5.0 to 10.0
-                "1" => model.set_factor(4.0),  // Update proportional gamma from 2.0 to 4.0
+                "0" => model.assay_mut().unwrap().set_factor(10.0), // Update additive lambda from 5.0 to 10.0
+                "1" => model.assay_mut().unwrap().set_factor(4.0), // Update proportional gamma from 2.0 to 4.0
                 _ => {}
             }
         }
@@ -1545,7 +1200,7 @@ mod tests {
 
         // Second iteration: fix all parameters using iter_mut
         for (_outeq, model) in models.iter_mut() {
-            model.fix_factor();
+            model.assay_mut().unwrap().fix_factor();
         }
 
         // Verify all parameters are now fixed
@@ -1560,12 +1215,12 @@ mod tests {
             count += 1;
             match outeq.as_str() {
                 "0" => {
-                    assert!(model.is_factor_fixed().unwrap());
-                    assert_eq!(model.factor().unwrap(), 10.0);
+                    assert!(model.assay().unwrap().is_factor_fixed().unwrap());
+                    assert_eq!(model.assay().unwrap().factor().unwrap(), 10.0);
                 }
                 "1" => {
-                    assert!(model.is_factor_fixed().unwrap());
-                    assert_eq!(model.factor().unwrap(), 4.0);
+                    assert!(model.assay().unwrap().is_factor_fixed().unwrap());
+                    assert_eq!(model.assay().unwrap().factor().unwrap(), 4.0);
                 }
                 _ => panic!("Unexpected outeq: {}", outeq),
             }
@@ -1573,7 +1228,10 @@ mod tests {
         assert_eq!(count, 2);
 
         // Test consuming iteration with into_iter()
-        let collected_models: Vec<(OutputLabel, AssayErrorModel)> = models.into_iter().collect();
+        let collected_models: Vec<(OutputLabel, AssayErrorModel)> = models
+            .into_iter()
+            .map(|(label, model)| (label, model.assay().unwrap().clone()))
+            .collect();
         assert_eq!(collected_models.len(), 2);
 
         // Verify the collected models retain their state
@@ -1590,7 +1248,7 @@ mod tests {
 
     #[test]
     fn error_model_hash_deterministic() {
-        let models = AssayErrorModels::new()
+        let models = OutputModels::new()
             .add(
                 0,
                 AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
@@ -1601,13 +1259,13 @@ mod tests {
 
     #[test]
     fn error_model_hash_differs_on_value() {
-        let a = AssayErrorModels::new()
+        let a = OutputModels::new()
             .add(
                 0,
                 AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
             )
             .unwrap();
-        let b = AssayErrorModels::new()
+        let b = OutputModels::new()
             .add(
                 0,
                 AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 10.0),
@@ -1618,7 +1276,7 @@ mod tests {
 
     #[test]
     fn numeric_and_text_labels_name_the_same_output() {
-        let mut models = AssayErrorModels::new()
+        let mut models = OutputModels::new()
             .add(
                 1,
                 AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0),
@@ -1630,17 +1288,21 @@ mod tests {
         assert!(models.contains(1) && models.contains("1"));
         assert!(!models.contains("01"));
         assert_eq!(models.get(1), models.get("1"));
-        assert!(models.error_model("01").is_err());
+        assert!(models.output_model("01").is_err());
         assert!(models.is_proportional("1") && !models.is_additive(1));
         assert!(!models.is_proportional("01"));
 
         // Changes through one spelling are seen through the other.
-        models.get_mut(1).unwrap().set_factor(3.0);
+        models
+            .get_mut(1)
+            .and_then(OutputModel::assay_mut)
+            .unwrap()
+            .set_factor(3.0);
         assert_eq!(models.factor("1").unwrap(), 3.0);
 
         // Iterating `&mut` reaches every model, as an optimizer loop would.
         for (_, model) in &mut models {
-            model.fix_factor();
+            model.assay_mut().unwrap().fix_factor();
         }
         assert!(models.is_factor_fixed("1").unwrap());
         assert_eq!((&models).into_iter().count(), 1);
@@ -1652,7 +1314,7 @@ mod tests {
             AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
             AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
         ] {
-            let a = AssayErrorModels::new().add("cp", model).unwrap();
+            let a = OutputModels::new().add("cp", model).unwrap();
             let mut b = a.clone();
             b.set_errorpoly("cp", ErrorPoly::new(1.0, 0.1, 0.0, 0.0))
                 .unwrap();
@@ -1662,13 +1324,13 @@ mod tests {
 
     #[test]
     fn error_model_hash_differs_on_type() {
-        let a = AssayErrorModels::new()
+        let a = OutputModels::new()
             .add(
                 0,
                 AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
             )
             .unwrap();
-        let b = AssayErrorModels::new()
+        let b = OutputModels::new()
             .add(
                 0,
                 AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),

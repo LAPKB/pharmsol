@@ -46,9 +46,9 @@ impl SubjectPredictions {
     /// when computing products of small probabilities.
     ///
     /// # Observation Model
-    /// [`crate::AssayErrorModels`] use observation-based sigma, appropriate
-    /// for non-parametric algorithms (NPAG, NPOD); [`crate::ResidualErrorModels`]
-    /// use prediction-based sigma, for parametric algorithms (SAEM, FOCE).
+    /// Usually a [`crate::OutputModels`]: each output's model takes sigma
+    /// from the observation (assay error, e.g. for NPAG) or from the
+    /// prediction (residual error, e.g. for SAEM).
     ///
     /// # Returns
     /// The sum of all individual prediction log-likelihoods.
@@ -171,12 +171,13 @@ impl From<Array2<SubjectPredictions>> for PopulationPredictions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::error_model::{AssayErrorModel, AssayErrorModels, ErrorPoly};
+    use crate::data::error_model::{AssayErrorModel, ErrorPoly};
     use crate::data::event::{Observation, OutputLabel};
+    use crate::data::output_model::OutputModels;
     use crate::Censor;
 
-    fn create_error_models() -> AssayErrorModels {
-        AssayErrorModels::new()
+    fn create_error_models() -> OutputModels {
+        OutputModels::new()
             .add(
                 0,
                 AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
@@ -206,7 +207,7 @@ mod tests {
         preds.add_prediction(obs.to_prediction(1.0, vec![]));
 
         let error_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0);
-        let errors = AssayErrorModels::new().add(0, error_model).unwrap();
+        let errors = OutputModels::new().add(0, error_model).unwrap();
 
         let log_lik = preds.log_likelihood(&errors).unwrap();
         assert!(log_lik.is_finite());

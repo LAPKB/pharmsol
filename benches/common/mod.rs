@@ -146,8 +146,8 @@ pub fn support_points(workload: Workload, n: usize) -> Array2<f64> {
 // ───────────────────────────── Error models ──────────────────────────
 
 /// Assay error model for `log_likelihood` / `log_likelihood_matrix`.
-pub fn assay_error_models() -> AssayErrorModels {
-    AssayErrorModels::new()
+pub fn assay_error_models() -> OutputModels {
+    OutputModels::new()
         .add(
             "plasma",
             AssayErrorModel::additive(ErrorPoly::new(0.1, 0.1, 0.0, 0.0), 0.0),

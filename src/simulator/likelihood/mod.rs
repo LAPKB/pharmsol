@@ -1,12 +1,13 @@
 //! Likelihood calculation module for pharmacometric analyses.
 //!
 //! This module provides functions and types for computing log-likelihoods
-//! in pharmacometric population modeling. It supports both:
+//! in pharmacometric population modeling. Observations are scored with an
+//! [`ObservationModel`], usually a [`crate::OutputModels`] whose outputs take
+//! sigma from the observation (assay error, typical for non-parametric
+//! algorithms such as NPAG, NPOD) or from the prediction (residual error,
+//! typical for parametric algorithms such as SAEM, FOCE).
 //!
-//! - **Non-parametric algorithms** (NPAG, NPOD): Use [`crate::AssayErrorModels`] with observation-based sigma
-//! - **Parametric algorithms** (SAEM, FOCE): Use [`crate::ResidualErrorModels`] with prediction-based sigma
-//!
-//! Both are [`ObservationModel`]s, and every function here accepts either.
+//! Every function here accepts any [`ObservationModel`].
 //! All of them score subjects through [`Equation::log_likelihood`], so a
 //! deterministic equation sums the observation log-densities of its
 //! (cached) predictions and an [`SDE`](crate::SDE) runs its particle filter.
@@ -99,8 +100,9 @@ use crate::{Data, Equation, PharmsolError, Subject};
 /// Each subject is scored with [`Equation::log_likelihood`], so cached
 /// predictions are reused without copying them and an [`SDE`](crate::SDE)
 /// is scored with its particle filter. Usually `observation_model` is a
-/// [`crate::ResidualErrorModels`] (prediction-based sigma, appropriate for
-/// parametric algorithms like SAEM, FOCE), but any [`ObservationModel`] works.
+/// [`crate::OutputModels`] with residual (prediction-based) error, as
+/// parametric algorithms like SAEM and FOCE use, but any [`ObservationModel`]
+/// works.
 ///
 /// # Parameters
 /// - `equation`: The equation to use for simulation
@@ -117,10 +119,10 @@ use crate::{Data, Equation, PharmsolError, Subject};
 /// # Example
 /// ```ignore
 /// use pharmsol::prelude::simulator::log_likelihood_batch;
-/// use pharmsol::{ResidualErrorModel, ResidualErrorModels};
+/// use pharmsol::{OutputModels, ResidualErrorModel};
 ///
-/// let residual_error = ResidualErrorModels::new()
-///     .add("cp", ResidualErrorModel::constant(0.5));
+/// let residual_error = OutputModels::new()
+///     .add("cp", ResidualErrorModel::constant(0.5))?;
 ///
 /// let log_liks = log_likelihood_batch(
 ///     &equation,
@@ -241,7 +243,7 @@ mod tests {
         };
 
         // Create error model with additive error
-        let error_models = crate::AssayErrorModels::new()
+        let error_models = crate::OutputModels::new()
             .add(
                 0,
                 AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
@@ -288,7 +290,7 @@ mod tests {
         ];
 
         let subject_predictions = SubjectPredictions::from(predictions);
-        let error_models = crate::AssayErrorModels::new()
+        let error_models = crate::OutputModels::new()
             .add(
                 0,
                 AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
@@ -312,7 +314,7 @@ mod tests {
     #[test]
     fn test_empty_predictions_have_neutral_log_likelihood() {
         let preds = SubjectPredictions::default();
-        let errors = crate::AssayErrorModels::new();
+        let errors = crate::OutputModels::new();
         assert_eq!(preds.log_likelihood(&errors).unwrap(), 0.0); // log(1) = 0
     }
 
@@ -323,7 +325,7 @@ mod tests {
         preds.add_prediction(obs.to_prediction(1.0, vec![]));
 
         let error_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0);
-        let errors = crate::AssayErrorModels::new().add(0, error_model).unwrap();
+        let errors = crate::OutputModels::new().add(0, error_model).unwrap();
 
         let log_lik = preds.log_likelihood(&errors).unwrap();
         assert!(log_lik.is_finite());

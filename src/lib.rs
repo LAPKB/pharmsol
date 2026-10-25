@@ -330,9 +330,10 @@ pub mod prelude {
     // Data submodule for organized access and backward compatibility
     pub mod data {
         pub use crate::data::{
-            error_model::{AssayErrorModel, AssayErrorModels},
+            error_model::AssayErrorModel,
+            output_model::{Family, OutputModel, OutputModels, Scale, Transform},
             parser::{read_pmetrics, DataError, DataRow, DataRowBuilder},
-            residual_error::{ResidualErrorModel, ResidualErrorModels},
+            residual_error::ResidualErrorModel,
             Covariates, Data, Event, Occasion, Subject,
         };
     }
@@ -340,8 +341,10 @@ pub mod prelude {
     // Direct data re-exports for convenience
     pub use crate::data::{
         builder::SubjectBuilderExt,
-        error_model::{AssayErrorModel, AssayErrorModels, ErrorPoly},
+        error_model::{AssayErrorModel, ErrorPoly},
         event::{AUCMethod, BLQRule, OutputLabel, Route},
+        output_model::{Family, OutputModel, OutputModels, Scale, Transform},
+        residual_error::ResidualErrorModel,
         Covariates, Data, Event, Interpolation, Occasion, Subject,
     };
 

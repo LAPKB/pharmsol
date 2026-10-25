@@ -24,8 +24,8 @@ fn subject() -> Subject {
 
 const PARAMETERS: [(&str, f64); 2] = [("ke", 0.2), ("v", 20.0)];
 
-fn cp_error_models() -> AssayErrorModels {
-    AssayErrorModels::new()
+fn cp_error_models() -> OutputModels {
+    OutputModels::new()
         .add(
             "cp",
             AssayErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 0.5),
@@ -33,8 +33,8 @@ fn cp_error_models() -> AssayErrorModels {
         .expect("cp error model")
 }
 
-fn undeclared_error_models() -> AssayErrorModels {
-    AssayErrorModels::new()
+fn undeclared_error_models() -> OutputModels {
+    OutputModels::new()
         .add(
             "concentration",
             AssayErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 0.5),
@@ -270,14 +270,14 @@ fn equations_without_metadata_accept_only_existing_output_numbers() -> Result<()
     let parameters = [0.2, 20.0];
     let error_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 0.5);
 
-    let by_position = AssayErrorModels::new().add(0, error_model.clone())?;
+    let by_position = OutputModels::new().add(0, error_model.clone())?;
     assert!(ode
         .log_likelihood(&subject, &parameters, &by_position)?
         .is_finite());
 
     // There is no second output, and an equation without metadata has no names.
     for label in ["1", "cp"] {
-        let error_models = AssayErrorModels::new().add(label, error_model.clone())?;
+        let error_models = OutputModels::new().add(label, error_model.clone())?;
         assert_unknown_label(
             &format!("label `{label}`"),
             ode.log_likelihood(&subject, &parameters, &error_models),
