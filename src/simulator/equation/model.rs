@@ -319,6 +319,22 @@ fn check_step(step: &Step) -> Result<(), PharmsolError> {
                 infusion.duration
             ))
         }
+        Step::Infusion(infusion) => {
+            let (amount, duration) = (infusion.amount, infusion.duration);
+            let rate = infusion.rate();
+            let end = infusion.end();
+            if !rate.is_finite() || (amount != 0.0 && rate == 0.0) {
+                invalid(format!(
+                    "infusion at t = {time} with amount {amount:?} and duration {duration:?} has an unrepresentable rate {rate:?}"
+                ))
+            } else if !end.is_finite() || end <= time {
+                invalid(format!(
+                    "infusion at t = {time} with duration {duration:?} has an end time {end:?} that is not finite or not after its start"
+                ))
+            } else {
+                Ok(())
+            }
+        }
         _ => Ok(()),
     }
 }

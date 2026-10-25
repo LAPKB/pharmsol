@@ -40,7 +40,7 @@ pub(crate) fn validate_resolved_ode_schedule(steps: &[Step]) -> Result<f64, Phar
     let first_event_time = steps.first().map(Step::time).unwrap_or(0.0);
     if !first_event_time.is_finite() {
         return Err(PharmsolError::OtherError(format!(
-            "invalid ODE event schedule: first resolved event time {first_event_time:?} is not finite"
+            "invalid event schedule: first resolved event time {first_event_time:?} is not finite"
         )));
     }
     let time_origin = first_event_time;
@@ -52,19 +52,19 @@ pub(crate) fn validate_resolved_ode_schedule(steps: &[Step]) -> Result<f64, Phar
         let time = step.time();
         if !time.is_finite() {
             return Err(PharmsolError::OtherError(format!(
-                "invalid ODE event schedule: resolved event {index} has non-finite time {time:?}"
+                "invalid event schedule: resolved event {index} has non-finite time {time:?}"
             )));
         }
         if let Some(previous) = previous_event_time {
             if time < previous {
                 return Err(PharmsolError::OtherError(format!(
-                    "invalid ODE event schedule: resolved event times are not nondecreasing; event {index} at t = {time:.16e} follows t = {previous:.16e}"
+                    "invalid event schedule: resolved event times are not nondecreasing; event {index} at t = {time:.16e} follows t = {previous:.16e}"
                 )));
             }
             let gap = time - previous;
             if !gap.is_finite() || (time > previous && gap <= 0.0) {
                 return Err(PharmsolError::OtherError(format!(
-                    "invalid ODE event schedule: gap from t = {previous:.16e} to t = {time:.16e} is not representable"
+                    "invalid event schedule: gap from t = {previous:.16e} to t = {time:.16e} is not representable"
                 )));
             }
         }
@@ -75,7 +75,7 @@ pub(crate) fn validate_resolved_ode_schedule(steps: &[Step]) -> Result<f64, Phar
             Step::Bolus { amount, .. } => {
                 if !amount.is_finite() {
                     return Err(PharmsolError::OtherError(format!(
-                        "invalid ODE event schedule: bolus at t = {time:.16e} has non-finite amount {amount:?}"
+                        "invalid event schedule: bolus at t = {time:.16e} has non-finite amount {amount:?}"
                     )));
                 }
             }
@@ -83,42 +83,42 @@ pub(crate) fn validate_resolved_ode_schedule(steps: &[Step]) -> Result<f64, Phar
                 let amount = infusion.amount;
                 if !amount.is_finite() {
                     return Err(PharmsolError::OtherError(format!(
-                        "invalid ODE event schedule: infusion at t = {time:.16e} has non-finite amount {amount:?}"
+                        "invalid event schedule: infusion at t = {time:.16e} has non-finite amount {amount:?}"
                     )));
                 }
 
                 let duration = infusion.duration;
                 if !duration.is_finite() {
                     return Err(PharmsolError::OtherError(format!(
-                        "invalid ODE event schedule: infusion at t = {time:.16e} has non-finite duration {duration:?}"
+                        "invalid event schedule: infusion at t = {time:.16e} has non-finite duration {duration:?}"
                     )));
                 }
                 if duration <= 0.0 {
                     return Err(PharmsolError::OtherError(format!(
-                        "invalid ODE event schedule: infusion at t = {time:.16e} must have positive duration, got {duration:.16e}"
+                        "invalid event schedule: infusion at t = {time:.16e} must have positive duration, got {duration:.16e}"
                     )));
                 }
                 let rate = amount / duration;
                 if !rate.is_finite() {
                     return Err(PharmsolError::OtherError(format!(
-                        "invalid ODE event schedule: infusion at t = {time:.16e} has non-finite rate from amount {amount:.16e} and duration {duration:.16e}"
+                        "invalid event schedule: infusion at t = {time:.16e} has non-finite rate from amount {amount:.16e} and duration {duration:.16e}"
                     )));
                 }
                 if amount != 0.0 && rate == 0.0 {
                     return Err(PharmsolError::OtherError(format!(
-                        "invalid ODE event schedule: infusion at t = {time:.16e} with amount {amount:.16e} and duration {duration:.16e} has a zero rate, which would silently lose nonzero infusion material"
+                        "invalid event schedule: infusion at t = {time:.16e} with amount {amount:.16e} and duration {duration:.16e} has a zero rate, which would silently lose nonzero infusion material"
                     )));
                 }
                 let endpoint = time + duration;
                 if !endpoint.is_finite() {
                     return Err(PharmsolError::OtherError(format!(
-                        "invalid ODE event schedule: infusion endpoint {time:.16e} + {duration:.16e} is not finite"
+                        "invalid event schedule: infusion endpoint {time:.16e} + {duration:.16e} is not finite"
                     )));
                 }
                 let endpoint_gap = endpoint - time;
                 if !endpoint_gap.is_finite() || endpoint_gap <= 0.0 {
                     return Err(PharmsolError::OtherError(format!(
-                        "invalid ODE event schedule: infusion endpoint {endpoint:.16e} is not representably after start t = {time:.16e}"
+                        "invalid event schedule: infusion endpoint {endpoint:.16e} is not representably after start t = {time:.16e}"
                     )));
                 }
                 required_times.push(endpoint);
@@ -134,7 +134,7 @@ pub(crate) fn validate_resolved_ode_schedule(steps: &[Step]) -> Result<f64, Phar
             let gap = time - previous_time;
             if !gap.is_finite() || gap <= 0.0 {
                 return Err(PharmsolError::OtherError(format!(
-                    "invalid ODE event schedule: required positive gap from t = {previous_time:.16e} to t = {time:.16e} is not representable"
+                    "invalid event schedule: required positive gap from t = {previous_time:.16e} to t = {time:.16e} is not representable"
                 )));
             }
         }

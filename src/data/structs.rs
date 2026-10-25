@@ -564,10 +564,17 @@ impl Subject {
                     crate::data::event::Event::Observation(obs) => {
                         2u8.hash(&mut hasher);
                         obs.time().to_bits().hash(&mut hasher);
-                        if let Some(v) = obs.value() {
-                            v.to_bits().hash(&mut hasher);
-                        }
+                        obs.value().map(f64::to_bits).hash(&mut hasher);
                         obs.outeq().hash(&mut hasher);
+                        // Cached predictions carry these, and the likelihood
+                        // reads them back.
+                        (obs.censoring() as u8).hash(&mut hasher);
+                        obs.errorpoly()
+                            .map(|poly| {
+                                let (c0, c1, c2, c3) = poly.coefficients();
+                                [c0, c1, c2, c3].map(f64::to_bits)
+                            })
+                            .hash(&mut hasher);
                     }
                 }
             }
@@ -1790,6 +1797,36 @@ mod tests {
         }
         assert_ne!(subject.hash(), after);
         assert_eq!(subject.hash(), subject.compute_hash());
+    }
+
+    #[test]
+    fn hash_differs_by_censoring_and_error_poly() {
+        let base = || Subject::builder("s1").bolus(0.0, 100.0, 0);
+        let plain = base().observation(1.0, 5.0, 0).build();
+        let censored = base()
+            .censored_observation(1.0, 5.0, 0, Censor::BLOQ)
+            .build();
+        let with_poly = base()
+            .observation_with_error(
+                1.0,
+                5.0,
+                0,
+                ErrorPoly::new(0.1, 0.2, 0.0, 0.0),
+                Censor::None,
+            )
+            .build();
+        let other_poly = base()
+            .observation_with_error(
+                1.0,
+                5.0,
+                0,
+                ErrorPoly::new(0.1, 0.3, 0.0, 0.0),
+                Censor::None,
+            )
+            .build();
+        assert_ne!(plain.hash(), censored.hash());
+        assert_ne!(plain.hash(), with_poly.hash());
+        assert_ne!(with_poly.hash(), other_poly.hash());
     }
 
     #[test]

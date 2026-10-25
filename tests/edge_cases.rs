@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use ndarray::array;
 use pharmsol::prelude::simulator::log_likelihood_matrix;
 use pharmsol::prelude::*;
-use pharmsol::{equation, Analytical, Cache, Predictions, ODE, SDE};
+use pharmsol::{equation, Analytical, Cache, Censor, Predictions, ODE, SDE};
 
 fn ode() -> ODE {
     ODE::new(
@@ -91,6 +91,63 @@ fn zero_duration_infusions_are_rejected_by_every_family() {
     assert_err_contains(ode().predict(&subject, &P), "positive");
     assert_err_contains(analytical(1).predict(&subject, &P), "positive");
     assert_err_contains(sde(4).predict(&subject, &P), "positive");
+}
+
+#[test]
+fn unrepresentable_infusions_are_rejected_by_every_family() {
+    // The end time rounds back to the start, which analytical models used to
+    // treat as no dose at all.
+    let instant = Subject::builder("s")
+        .infusion(1.0, 1.0, 0, 1e-20)
+        .observation(2.0, 1.0, 0)
+        .build();
+    // A finite amount over a tiny duration overflows the rate.
+    let overflowing = Subject::builder("s")
+        .infusion(0.0, 1e300, 0, 1e-300)
+        .observation(1.0, 1.0, 0)
+        .build();
+    // A tiny amount over a long duration underflows the rate to zero.
+    let underflowing = Subject::builder("s")
+        .infusion(0.0, 1e-300, 0, 1e300)
+        .observation(1.0, 1.0, 0)
+        .build();
+    for (subject, needle) in [
+        (&instant, "not after its start"),
+        (&overflowing, "unrepresentable rate"),
+        (&underflowing, "unrepresentable rate"),
+    ] {
+        assert_err_contains(ode().predict(subject, &P), needle);
+        assert_err_contains(analytical(1).predict(subject, &P), needle);
+        assert_err_contains(sde(4).predict(subject, &P), needle);
+    }
+}
+
+/// Cached predictions carry each observation's censoring, so two subjects
+/// that differ only in censoring must not share a cache entry.
+#[test]
+fn cached_likelihood_follows_censoring() {
+    let subject = |censoring| {
+        Subject::builder("s")
+            .bolus(0.0, 100.0, 0)
+            .censored_observation(1.0, 5.0, 0, censoring)
+            .build()
+    };
+    let observed = subject(Censor::None);
+    let censored = subject(Censor::BLOQ);
+    let models = error_models();
+    let ode = ode();
+
+    let cached = (
+        ode.log_likelihood(&observed, &P, &models).unwrap(),
+        ode.log_likelihood(&censored, &P, &models).unwrap(),
+    );
+    let ode = ode.disable_cache();
+    let uncached = (
+        ode.log_likelihood(&observed, &P, &models).unwrap(),
+        ode.log_likelihood(&censored, &P, &models).unwrap(),
+    );
+    assert_eq!(cached, uncached);
+    assert_ne!(uncached.0, uncached.1);
 }
 
 #[test]

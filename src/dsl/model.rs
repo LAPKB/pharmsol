@@ -444,8 +444,35 @@ impl JitModel {
         }
     }
 
+    /// Reject a buffer shorter than the compiled code will read or write.
+    ///
+    /// Compiled functions take raw pointers, so this is what keeps the safe
+    /// [`Model`] methods sound when they are called directly.
+    fn check_len(&self, buffer: &str, len: usize, required: usize) -> Result<(), PharmsolError> {
+        if len < required {
+            return Err(PharmsolError::OtherError(format!(
+                "model `{}` needs a {buffer} buffer of length {required}, got {len}",
+                self.info.name
+            )));
+        }
+        Ok(())
+    }
+
+    /// Check a workspace against this model; one from another model may be
+    /// too small. The zero buffers are taken out while in use and checked as
+    /// the state and route arguments instead.
+    fn check_workspace(&self, ws: &JitWorkspace) -> Result<(), PharmsolError> {
+        let info = &self.info;
+        self.check_len("covariate", ws.covariates.len(), info.covariates.len())?;
+        self.check_len("derived", ws.derived.len(), info.derived_len)?;
+        self.check_len("route value", ws.route_values.len(), info.route_len)
+    }
+
     /// Interpolate covariates and run the derive function, if any, into
     /// `ws.derived`.
+    ///
+    /// Every compiled call goes through here first, so this also checks the
+    /// workspace and the state, parameter and route buffers.
     fn refresh_derived(
         &self,
         ws: &mut JitWorkspace,
@@ -455,6 +482,10 @@ impl JitModel {
         cov: &Covariates,
         routes: &[f64],
     ) -> Result<(), PharmsolError> {
+        self.check_workspace(ws)?;
+        self.check_len("state", state.len(), self.info.state_len)?;
+        self.check_len("parameter", p.len(), self.info.parameters.len())?;
+        self.check_len("route", routes.len(), self.info.route_len)?;
         for covariate in &self.info.covariates {
             ws.covariates[covariate.index] = match cov.get_covariate(&covariate.name) {
                 Some(values) => values.interpolate(time).unwrap_or(f64::NAN),
@@ -546,6 +577,11 @@ impl JitModel {
         rates: &[f64],
         out: &mut [f64],
     ) -> Result<(), PharmsolError> {
+        let out_len = match role {
+            ModelFunctionKind::Outputs => self.info.output_len,
+            _ => self.info.state_len,
+        };
+        self.check_len("output", out.len(), out_len)?;
         self.refresh_derived(ws, time, x, p, cov, rates)?;
         unsafe {
             self.call(
@@ -1563,5 +1599,55 @@ mod tests {
             .predict(&subject, &parameters)
             .expect("the equation should return the cached prediction");
         assert_eq!(direct.flat_predictions(), expected.flat_predictions());
+    }
+
+    /// Calling the safe `Model` methods directly with undersized buffers must
+    /// be an error, not an out-of-bounds access in compiled code. The dummy
+    /// artifact panics if it is ever reached.
+    #[test]
+    fn direct_model_calls_reject_undersized_buffers() {
+        use crate::data::Covariates;
+        use crate::simulator::equation::{Model, OdeModel};
+        use crate::simulator::V;
+        use diffsol::{NalgebraContext, Vector};
+
+        let model = bolus_only_model();
+        let vec = |len: usize| V::from_vec(vec![0.0; len], NalgebraContext::new());
+        let cov = Covariates::new();
+        let message = |result: Result<(), PharmsolError>| {
+            result
+                .expect_err("an undersized buffer must be rejected")
+                .to_string()
+        };
+
+        let mut ws = model.workspace();
+        let mut y = vec(0);
+        assert!(
+            message(model.outputs(&mut ws, 0.0, &vec(1), &vec(0), &cov, &vec(1), &mut y))
+                .contains("output buffer")
+        );
+
+        let mut dx = vec(1);
+        assert!(
+            message(model.rhs(&mut ws, 0.0, &vec(0), &vec(0), &cov, &vec(1), &mut dx))
+                .contains("state buffer")
+        );
+        assert!(
+            message(model.rhs(&mut ws, 0.0, &vec(1), &vec(0), &cov, &vec(0), &mut dx))
+                .contains("route buffer")
+        );
+
+        let mut foreign = super::JitWorkspace {
+            covariates: Vec::new(),
+            derived: Vec::new(),
+            route_values: Vec::new(),
+            zero_state: Vec::new(),
+            zero_routes: Vec::new(),
+        };
+        let mut y = vec(1);
+        assert!(
+            message(model.outputs(&mut foreign, 0.0, &vec(1), &vec(0), &cov, &vec(1), &mut y))
+                .contains("buffer of length")
+        );
     }
 }
