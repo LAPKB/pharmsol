@@ -16,6 +16,13 @@ pub enum Factor {
     Fixed(f64),
 }
 
+/// A plain value is a variable factor.
+impl From<f64> for Factor {
+    fn from(value: f64) -> Self {
+        Factor::Variable(value)
+    }
+}
+
 impl Factor {
     /// Get the current value of the parameter
     pub fn value(&self) -> f64 {
@@ -133,9 +140,6 @@ pub(crate) fn hash_model<H: Hasher>(hasher: &mut H, model: &AssayErrorModel) {
             gamma.is_fixed().hash(hasher);
             hash_poly(hasher, poly);
         }
-        AssayErrorModel::None => {
-            2u8.hash(hasher);
-        }
     }
 }
 
@@ -148,270 +152,162 @@ fn hash_poly<H: Hasher>(hasher: &mut H, poly: &ErrorPoly) {
     }
 }
 
-/// Model for calculating observation errors in pharmacometric analyses
+/// Assay error: sigma computed from the **observed value**.
 ///
-/// An [AssayErrorModel] defines how the standard deviation of observations is calculated
-/// based on the type of error model used and its parameters.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+/// The assay's own standard deviation at an observed value `y` comes from
+/// the [`ErrorPoly`]:
+///
+/// ```text
+/// α(y) = c0 + c1·y + c2·y² + c3·y³
+/// ```
+///
+/// The variant says how the extra, unexplained noise of the [`Factor`] is
+/// combined with it:
+///
+/// - [`AssayErrorModel::Additive`] (λ): `σ = sqrt(α² + λ²)`, adding noise
+///   independent of the assay's.
+/// - [`AssayErrorModel::Proportional`] (γ): `σ = γ·α`, scaling the assay's
+///   standard deviation.
+///
+/// Note that "proportional" here scales α, unlike
+/// [`ResidualErrorModel::proportional`](crate::ResidualErrorModel::proportional),
+/// which scales the prediction. An observation that carries its own
+/// polynomial (from the data set) uses it in place of the model's.
+///
+/// Non-parametric algorithms (NPAG, NPOD) estimate λ or γ unless the factor
+/// is [`Factor::Fixed`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum AssayErrorModel {
-    /// Additive error model, where error is independent of concentration
-    ///
-    /// Contains:
-    /// * `lambda` - Lambda parameter for scaling errors (can be fixed or variable)
-    /// * `poly` - Error polynomial coefficients (c0, c1, c2, c3)
+    /// `σ = sqrt(α² + λ²)`.
     Additive {
-        /// Lambda parameter for scaling errors (can be fixed or variable)
+        /// Lambda: standard deviation of the noise added to the assay's.
         lambda: Factor,
-        /// Error polynomial coefficients (c0, c1, c2, c3)
+        /// The assay error polynomial α.
         poly: ErrorPoly,
     },
 
-    /// Proportional error model, where error scales with concentration
-    ///
-    /// Contains:
-    /// * `gamma` - Gamma parameter for scaling errors (can be fixed or variable)
-    /// * `poly` - Error polynomial coefficients (c0, c1, c2, c3)
+    /// `σ = γ·α`.
     Proportional {
-        /// Gamma parameter for scaling errors (can be fixed or variable)
+        /// Gamma: the factor the assay's standard deviation is scaled by.
         gamma: Factor,
-        /// Error polynomial coefficients (c0, c1, c2, c3)
+        /// The assay error polynomial α.
         poly: ErrorPoly,
     },
-    #[default]
-    None,
 }
 
-/// Deprecated alias for [`AssayErrorModel`].
-///
-/// This type alias is provided for backward compatibility.
-/// New code should use [`AssayErrorModel`] directly.
-#[deprecated(
-    since = "0.23.0",
-    note = "Use AssayErrorModel instead. ErrorModel has been renamed to better reflect its purpose (assay/measurement error)."
-)]
-pub type ErrorModel = AssayErrorModel;
-
 impl AssayErrorModel {
-    /// Create a new additive error model with a variable lambda parameter
+    /// Additive assay error, `σ = sqrt(α² + λ²)`.
     ///
-    /// # Arguments
+    /// A plain `f64` lambda is estimated; pass [`Factor::Fixed`] to fix it.
     ///
-    /// * `poly` - Error polynomial coefficients (c0, c1, c2, c3)
-    /// * `lambda` - Lambda parameter for scaling errors (will be variable)
+    /// ```rust
+    /// use pharmsol::prelude::*;
+    /// use pharmsol::data::error_model::Factor;
     ///
-    /// # Returns
-    ///
-    /// A new additive error model
-    pub fn additive(poly: ErrorPoly, lambda: f64) -> Self {
+    /// let poly = ErrorPoly::new(0.0, 0.1, 0.0, 0.0);
+    /// assert!(AssayErrorModel::additive(poly, 0.5).optimize());
+    /// assert!(!AssayErrorModel::additive(poly, Factor::Fixed(0.5)).optimize());
+    /// ```
+    pub fn additive(poly: ErrorPoly, lambda: impl Into<Factor>) -> Self {
         Self::Additive {
-            lambda: Factor::Variable(lambda),
+            lambda: lambda.into(),
             poly,
         }
     }
 
-    /// Create a new additive error model with a fixed lambda parameter
+    /// Proportional assay error, `σ = γ·α`.
     ///
-    /// # Arguments
-    ///
-    /// * `poly` - Error polynomial coefficients (c0, c1, c2, c3)
-    /// * `lambda` - Lambda parameter for scaling errors (will be fixed)
-    ///
-    /// # Returns
-    ///
-    /// A new additive error model with fixed lambda
-    pub fn additive_fixed(poly: ErrorPoly, lambda: f64) -> Self {
-        Self::Additive {
-            lambda: Factor::Fixed(lambda),
-            poly,
-        }
-    }
-
-    /// Create a new additive error model with a specified Factor for lambda
-    ///
-    /// # Arguments
-    ///
-    /// * `poly` - Error polynomial coefficients (c0, c1, c2, c3)
-    /// * `lambda` - Lambda parameter (can be Variable or Fixed) using [Factor]
-    ///
-    /// # Returns
-    ///
-    /// A new additive error model
-    pub fn additive_with_param(poly: ErrorPoly, lambda: Factor) -> Self {
-        Self::Additive { lambda, poly }
-    }
-
-    /// Create a new proportional error model with a variable gamma parameter
-    ///
-    /// # Arguments
-    ///
-    /// * `poly` - Error polynomial coefficients (c0, c1, c2, c3)
-    /// * `gamma` - Gamma parameter for scaling errors (will be variable)
-    ///
-    /// # Returns
-    ///
-    /// A new proportional error model
-    pub fn proportional(poly: ErrorPoly, gamma: f64) -> Self {
+    /// A plain `f64` gamma is estimated; pass [`Factor::Fixed`] to fix it.
+    pub fn proportional(poly: ErrorPoly, gamma: impl Into<Factor>) -> Self {
         Self::Proportional {
-            gamma: Factor::Variable(gamma),
+            gamma: gamma.into(),
             poly,
         }
     }
 
-    /// Create a new proportional error model with a fixed gamma parameter
-    ///
-    /// # Arguments
-    ///
-    /// * `poly` - Error polynomial coefficients (c0, c1, c2, c3)
-    /// * `gamma` - Gamma parameter for scaling errors (will be fixed)
-    ///
-    /// # Returns
-    ///
-    /// A new proportional error model with fixed gamma
-    pub fn proportional_fixed(poly: ErrorPoly, gamma: f64) -> Self {
-        Self::Proportional {
-            gamma: Factor::Fixed(gamma),
-            poly,
-        }
-    }
-
-    /// Create a new proportional error model with a specified Factor for gamma
-    ///
-    /// # Arguments
-    ///
-    /// * `poly` - Error polynomial coefficients (c0, c1, c2, c3)
-    /// * `gamma` - Gamma parameter (can be Variable or Fixed) using [Factor]
-    ///
-    /// # Returns
-    ///
-    /// A new proportional error model
-    pub fn proportional_with_param(poly: ErrorPoly, gamma: Factor) -> Self {
-        Self::Proportional { gamma, poly }
-    }
-
-    /// Get the error polynomial coefficients
-    ///
-    /// # Returns
-    ///
-    /// The error polynomial coefficients (c0, c1, c2, c3)
-    pub fn errorpoly(&self) -> Result<ErrorPoly, ErrorModelError> {
+    fn factor_ref(&self) -> &Factor {
         match self {
-            Self::Additive { poly, .. } => Ok(*poly),
-            Self::Proportional { poly, .. } => Ok(*poly),
-            Self::None => Err(ErrorModelError::MissingErrorModel),
+            Self::Additive { lambda, .. } => lambda,
+            Self::Proportional { gamma, .. } => gamma,
         }
     }
 
-    /// Set the error polynomial coefficients
-    ///
-    /// # Arguments
-    ///
-    /// * `poly` - New error polynomial coefficients (c0, c1, c2, c3)
-    ///
-    /// # Returns
-    ///
-    /// The updated error model with the new polynomial coefficients
-    pub fn set_errorpoly(&mut self, poly: ErrorPoly) {
+    fn factor_mut(&mut self) -> &mut Factor {
         match self {
-            Self::Additive { poly: p, .. } => *p = poly,
-            Self::Proportional { poly: p, .. } => *p = poly,
-            Self::None => {}
+            Self::Additive { lambda, .. } => lambda,
+            Self::Proportional { gamma, .. } => gamma,
         }
     }
 
-    /// Get the scaling parameter value
-    pub fn factor(&self) -> Result<f64, ErrorModelError> {
+    /// The assay error polynomial.
+    pub fn errorpoly(&self) -> ErrorPoly {
         match self {
-            Self::Additive { lambda, .. } => Ok(lambda.value()),
-            Self::Proportional { gamma, .. } => Ok(gamma.value()),
-            Self::None => Err(ErrorModelError::MissingErrorModel),
+            Self::Additive { poly, .. } | Self::Proportional { poly, .. } => *poly,
         }
     }
 
-    /// Set the scaling parameter value (preserves fixed/variable state)
+    /// Replace the assay error polynomial.
+    pub fn set_errorpoly(&mut self, new_poly: ErrorPoly) {
+        match self {
+            Self::Additive { poly, .. } | Self::Proportional { poly, .. } => *poly = new_poly,
+        }
+    }
+
+    /// The factor's value (lambda or gamma).
+    pub fn factor(&self) -> f64 {
+        self.factor_ref().value()
+    }
+
+    /// Set the factor's value, keeping whether it is fixed.
     pub fn set_factor(&mut self, factor: f64) {
-        match self {
-            Self::Additive { lambda, .. } => lambda.set_value(factor),
-            Self::Proportional { gamma, .. } => gamma.set_value(factor),
-            Self::None => {}
-        }
+        self.factor_mut().set_value(factor);
     }
 
-    /// Get the scaling parameter (including its fixed/variable state)
-    pub fn factor_param(&self) -> Result<Factor, ErrorModelError> {
-        match self {
-            Self::Additive { lambda, .. } => Ok(*lambda),
-            Self::Proportional { gamma, .. } => Ok(*gamma),
-            Self::None => Err(ErrorModelError::MissingErrorModel),
-        }
+    /// The factor, with whether it is fixed.
+    pub fn factor_param(&self) -> Factor {
+        *self.factor_ref()
     }
 
-    /// Set the scaling parameter (including its fixed/variable state)
+    /// Replace the factor, including whether it is fixed.
     pub fn set_factor_param(&mut self, param: Factor) {
-        match self {
-            Self::Additive { lambda, .. } => *lambda = param,
-            Self::Proportional { gamma, .. } => *gamma = param,
-            Self::None => {}
-        }
+        *self.factor_mut() = param;
     }
 
-    /// Check if the scaling parameter is fixed
-    pub fn is_factor_fixed(&self) -> Result<bool, ErrorModelError> {
-        match self {
-            Self::Additive { lambda, .. } => Ok(lambda.is_fixed()),
-            Self::Proportional { gamma, .. } => Ok(gamma.is_fixed()),
-            Self::None => Err(ErrorModelError::MissingErrorModel),
-        }
+    /// Whether the factor is fixed.
+    pub fn is_factor_fixed(&self) -> bool {
+        self.factor_ref().is_fixed()
     }
 
-    /// Make the scaling parameter fixed at its current value
+    /// Fix the factor at its current value.
     pub fn fix_factor(&mut self) {
-        match self {
-            Self::Additive { lambda, .. } => lambda.make_fixed(),
-            Self::Proportional { gamma, .. } => gamma.make_fixed(),
-            Self::None => {}
-        }
+        self.factor_mut().make_fixed();
     }
 
-    /// Make the scaling parameter variable at its current value
+    /// Make the factor variable at its current value.
     pub fn unfix_factor(&mut self) {
-        match self {
-            Self::Additive { lambda, .. } => lambda.make_variable(),
-            Self::Proportional { gamma, .. } => gamma.make_variable(),
-            Self::None => {}
-        }
+        self.factor_mut().make_variable();
     }
 
-    /// Check if this is a proportional error model
-    ///
-    /// # Returns
-    ///
-    /// `true` if this is a `Proportional` variant, `false` otherwise
+    /// Whether this is [`AssayErrorModel::Proportional`].
     pub fn is_proportional(&self) -> bool {
         matches!(self, Self::Proportional { .. })
     }
 
-    /// Check if this is an additive error model
-    ///
-    /// # Returns
-    ///
-    /// `true` if this is an `Additive` variant, `false` otherwise
+    /// Whether this is [`AssayErrorModel::Additive`].
     pub fn is_additive(&self) -> bool {
         matches!(self, Self::Additive { .. })
     }
 
-    /// Estimate the standard deviation for a prediction
+    /// Whether the factor should be estimated, i.e. it is not fixed.
+    pub fn optimize(&self) -> bool {
+        self.factor_ref().is_variable()
+    }
+
+    /// Sigma for a prediction's observation, using the observation's own
+    /// polynomial if it carries one.
     ///
-    /// Calculates the standard deviation based on the error model type,
-    /// using either observation-specific error polynomial coefficients or
-    /// the model's default coefficients.
-    ///
-    /// # Arguments
-    ///
-    /// * `prediction` - The prediction for which to estimate the standard deviation
-    ///
-    /// # Returns
-    ///
-    /// The estimated standard deviation of the prediction
+    /// Errors with [`ErrorModelError::MissingObservation`] if the prediction
+    /// has no observation.
     pub fn sigma(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
         let observation = prediction
             .observation()
@@ -427,24 +323,11 @@ impl AssayErrorModel {
         observation: f64,
         errorpoly: Option<ErrorPoly>,
     ) -> Result<f64, ErrorModelError> {
-        // Get appropriate polynomial coefficients from the observation or default
-        let errorpoly = match errorpoly {
-            Some(poly) => poly,
-            None => self.errorpoly()?,
-        };
-
-        let (c0, c1, c2, c3) = (errorpoly.c0, errorpoly.c1, errorpoly.c2, errorpoly.c3);
-
-        // Calculate alpha term
+        let (c0, c1, c2, c3) = errorpoly.unwrap_or(self.errorpoly()).coefficients();
         let alpha = c0 + c1 * observation + c2 * observation.powi(2) + c3 * observation.powi(3);
-
-        // Calculate standard deviation based on error model type
         let sigma = match self {
             Self::Additive { lambda, .. } => (alpha.powi(2) + lambda.value().powi(2)).sqrt(),
             Self::Proportional { gamma, .. } => gamma.value() * alpha,
-            Self::None => {
-                return Err(ErrorModelError::MissingErrorModel);
-            }
         };
 
         if sigma < 0.0 {
@@ -456,70 +339,24 @@ impl AssayErrorModel {
         }
     }
 
-    /// Estimate the variance of the observation
-    ///
-    /// This is a convenience function which calls [AssayErrorModel::sigma], and squares the result.
+    /// Variance for a prediction's observation: [`Self::sigma`] squared.
     pub fn variance(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
-        let sigma = self.sigma(prediction)?;
-        Ok(sigma.powi(2))
+        Ok(self.sigma(prediction)?.powi(2))
     }
 
-    /// Estimate the standard deviation for a raw observation value
+    /// Sigma for an observed value, using the model's polynomial.
     ///
-    /// Calculates the standard deviation based on the error model type,
-    /// using the model's default coefficients and a provided observation value.
-    ///
-    /// # Arguments
-    ///
-    /// * `value` - The observation value for which to estimate the standard deviation
-    ///
-    /// # Returns
-    ///
-    /// The estimated standard deviation for the given value
+    /// Unlike [`Self::sigma`], a zero sigma is an error.
     pub fn sigma_from_value(&self, value: f64) -> Result<f64, ErrorModelError> {
-        // Get polynomial coefficients from the model
-        let (c0, c1, c2, c3) = self.errorpoly()?.coefficients();
-
-        // Calculate alpha term
-        let alpha = c0 + c1 * value + c2 * value.powi(2) + c3 * value.powi(3);
-
-        // Calculate standard deviation based on error model type
-        let sigma = match self {
-            Self::Additive { lambda, .. } => (alpha.powi(2) + lambda.value().powi(2)).sqrt(),
-            Self::Proportional { gamma, .. } => gamma.value() * alpha,
-            Self::None => {
-                return Err(ErrorModelError::MissingErrorModel);
-            }
-        };
-
-        if sigma < 0.0 {
-            Err(ErrorModelError::NegativeSigma)
-        } else if !sigma.is_finite() {
-            Err(ErrorModelError::NonFiniteSigma)
-        } else if sigma == 0.0 {
-            Err(ErrorModelError::ZeroSigma)
-        } else {
-            Ok(sigma)
+        match self.sigma_for(value, None)? {
+            0.0 => Err(ErrorModelError::ZeroSigma),
+            sigma => Ok(sigma),
         }
     }
 
-    /// Estimate the variance for a raw observation value
-    ///
-    /// This is a convenience function which calls [AssayErrorModel::sigma_from_value], and squares the result.
+    /// Variance for an observed value: [`Self::sigma_from_value`] squared.
     pub fn variance_from_value(&self, value: f64) -> Result<f64, ErrorModelError> {
-        let sigma = self.sigma_from_value(value)?;
-        Ok(sigma.powi(2))
-    }
-
-    /// Get a boolean indicating if the error model should be optimized
-    ///
-    /// In other words, if the error model is not None, and the [Factor] is variable, it should be optimized.
-    pub fn optimize(&self) -> bool {
-        match self {
-            Self::Additive { lambda, .. } => lambda.is_variable(),
-            Self::Proportional { gamma, .. } => gamma.is_variable(),
-            Self::None => false,
-        }
+        Ok(self.sigma_from_value(value)?.powi(2))
     }
 }
 
@@ -535,10 +372,6 @@ pub enum ErrorModelError {
     UnknownOutputLabel(String),
     #[error("The output label `{0}` already exists in this assay error model specification")]
     ExistingOutputLabel(String),
-    #[error("An output equation does not have an error model defined")]
-    MissingErrorModel,
-    #[error("The error model for output `{0}` is of type ErrorModel::None")]
-    NoneErrorModel(String),
     #[error("The prediction does not have an observation associated with it")]
     MissingObservation,
     #[error("The error model for output `{0}` takes sigma from the prediction, not from an assay error polynomial")]
@@ -552,790 +385,199 @@ pub enum ErrorModelError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::event::OutputLabel;
-    use crate::data::output_model::{OutputModel, OutputModels};
+    use crate::data::output_model::OutputModels;
     use crate::{Censor, Observation};
 
-    #[test]
-    fn test_additive_error_model() {
-        let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
-        let prediction = observation.to_prediction(10.0, vec![]);
-        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        assert_eq!(model.sigma(&prediction).unwrap(), (26.0_f64).sqrt());
+    fn poly(c0: f64) -> ErrorPoly {
+        ErrorPoly::new(c0, 0.0, 0.0, 0.0)
+    }
+
+    fn prediction(observation: Option<f64>, errorpoly: Option<ErrorPoly>) -> Prediction {
+        Observation::new(0.0, observation, 0, errorpoly, 0, Censor::None)
+            .to_prediction(10.0, vec![])
+    }
+
+    fn hash(model: &AssayErrorModel) -> u64 {
+        let mut hasher = ahash::AHasher::default();
+        hash_model(&mut hasher, model);
+        hasher.finish()
     }
 
     #[test]
-    fn test_proportional_error_model() {
-        let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
-        let prediction = observation.to_prediction(10.0, vec![]);
-        let model = AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
-        assert_eq!(model.sigma(&prediction).unwrap(), 2.0);
+    fn additive_and_proportional_sigma() {
+        let observed = prediction(Some(20.0), None);
+        let additive = AssayErrorModel::additive(poly(1.0), 5.0);
+        assert_eq!(additive.sigma(&observed).unwrap(), 26.0_f64.sqrt());
+        assert!((additive.variance(&observed).unwrap() - 26.0).abs() < 1e-12);
+
+        let proportional = AssayErrorModel::proportional(poly(1.0), 2.0);
+        assert_eq!(proportional.sigma(&observed).unwrap(), 2.0);
+
+        // The polynomial is evaluated at the observation, not the prediction.
+        let linear = AssayErrorModel::proportional(ErrorPoly::new(0.0, 0.1, 0.0, 0.0), 1.0);
+        assert!((linear.sigma(&observed).unwrap() - 2.0).abs() < 1e-12);
     }
 
     #[test]
-    fn test_polynomial() {
-        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 2.0, 3.0, 4.0), 5.0);
+    fn an_observation_polynomial_overrides_the_model_polynomial() {
+        let model = AssayErrorModel::proportional(poly(1.0), 2.0);
         assert_eq!(
-            model.errorpoly().unwrap().coefficients(),
-            (1.0, 2.0, 3.0, 4.0)
+            model
+                .sigma(&prediction(Some(20.0), Some(poly(3.0))))
+                .unwrap(),
+            6.0
         );
     }
 
     #[test]
-    fn test_set_errorpoly() {
+    fn sigma_needs_an_observation() {
+        let model = AssayErrorModel::additive(poly(1.0), 5.0);
+        assert!(matches!(
+            model.sigma(&prediction(None, None)),
+            Err(ErrorModelError::MissingObservation)
+        ));
+    }
+
+    #[test]
+    fn invalid_sigmas_are_errors() {
+        let negative = AssayErrorModel::proportional(poly(1.0), -1.0);
+        assert!(matches!(
+            negative.sigma(&prediction(Some(1.0), None)),
+            Err(ErrorModelError::NegativeSigma)
+        ));
+        let infinite = AssayErrorModel::proportional(poly(f64::INFINITY), 1.0);
+        assert!(matches!(
+            infinite.sigma(&prediction(Some(1.0), None)),
+            Err(ErrorModelError::NonFiniteSigma)
+        ));
+        let zero = AssayErrorModel::proportional(poly(0.0), 1.0);
+        assert_eq!(zero.sigma(&prediction(Some(1.0), None)).unwrap(), 0.0);
+        assert!(matches!(
+            zero.sigma_from_value(1.0),
+            Err(ErrorModelError::ZeroSigma)
+        ));
+    }
+
+    #[test]
+    fn sigma_from_value_uses_the_model_polynomial() {
+        let additive = AssayErrorModel::additive(poly(1.0), 5.0);
+        assert_eq!(additive.sigma_from_value(20.0).unwrap(), 26.0_f64.sqrt());
+        assert!((additive.variance_from_value(20.0).unwrap() - 26.0).abs() < 1e-12);
+        let proportional = AssayErrorModel::proportional(poly(1.0), 2.0);
+        assert_eq!(proportional.sigma_from_value(20.0).unwrap(), 2.0);
+    }
+
+    #[test]
+    fn errorpoly_can_be_read_and_replaced() {
         let mut model = AssayErrorModel::additive(ErrorPoly::new(1.0, 2.0, 3.0, 4.0), 5.0);
-        assert_eq!(
-            model.errorpoly().unwrap().coefficients(),
-            (1.0, 2.0, 3.0, 4.0)
-        );
+        assert_eq!(model.errorpoly().coefficients(), (1.0, 2.0, 3.0, 4.0));
         model.set_errorpoly(ErrorPoly::new(5.0, 6.0, 7.0, 8.0));
-        assert_eq!(
-            model.errorpoly().unwrap().coefficients(),
-            (5.0, 6.0, 7.0, 8.0)
-        );
+        assert_eq!(model.errorpoly().coefficients(), (5.0, 6.0, 7.0, 8.0));
     }
 
     #[test]
-    fn test_set_factor() {
-        let mut model = AssayErrorModel::additive(ErrorPoly::new(1.0, 2.0, 3.0, 4.0), 5.0);
-        assert_eq!(model.factor().unwrap(), 5.0);
-        model.set_factor(10.0);
-        assert_eq!(model.factor().unwrap(), 10.0);
-    }
-
-    #[test]
-    fn test_sigma_from_value() {
-        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        assert_eq!(model.sigma_from_value(20.0).unwrap(), (26.0_f64).sqrt());
-
-        let model = AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
-        assert_eq!(model.sigma_from_value(20.0).unwrap(), 2.0);
-    }
-
-    #[test]
-    fn test_error_models_new() {
-        let models = OutputModels::new();
-        assert_eq!(models.len(), 0);
-    }
-
-    #[test]
-    fn test_error_models_default() {
-        let models = OutputModels::default();
-        assert_eq!(models.len(), 0);
-    }
-
-    #[test]
-    fn test_error_models_add_single() {
-        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = OutputModels::new().add(0, model).unwrap();
-        assert_eq!(models.len(), 1);
-    }
-
-    #[test]
-    fn test_error_models_add_multiple() {
-        let model1 = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let model2 = AssayErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
-
-        let models = OutputModels::new()
-            .add(0, model1)
-            .unwrap()
-            .add(1, model2)
-            .unwrap();
-
-        assert_eq!(models.len(), 2);
-    }
-
-    #[test]
-    fn test_error_models_duplicate_label_fails() {
-        let result = OutputModels::new()
-            .add(
-                "cp",
-                AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
-            )
-            .unwrap()
-            .add(
-                "cp",
-                AssayErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0),
-            );
-
-        match result {
-            Err(ErrorModelError::ExistingOutputLabel(label)) => assert_eq!(label, "cp"),
-            _ => panic!("Expected ExistingOutputLabel error"),
+    fn a_plain_factor_is_variable_and_factor_fixed_is_fixed() {
+        for model in [
+            AssayErrorModel::additive(poly(1.0), 5.0),
+            AssayErrorModel::proportional(poly(1.0), 5.0),
+        ] {
+            assert_eq!(model.factor(), 5.0);
+            assert!(!model.is_factor_fixed());
+            assert!(model.optimize());
         }
-    }
-
-    #[test]
-    fn test_error_models_sigma_uses_prediction_label() {
-        let models = OutputModels::new()
-            .add(
-                "cp",
-                AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
-            )
-            .unwrap();
-
-        let observation = Observation::new(0.0, Some(20.0), "cp", None, 0, Censor::None);
-        let prediction = observation.to_prediction(10.0, vec![]);
-        assert_eq!(models.sigma(&prediction).unwrap(), (26.0_f64).sqrt());
-
-        let observation = Observation::new(0.0, Some(20.0), "effect", None, 0, Censor::None);
-        let prediction = observation.to_prediction(10.0, vec![]);
-        match models.sigma(&prediction) {
-            Err(ErrorModelError::UnknownOutputLabel(label)) => assert_eq!(label, "effect"),
-            other => panic!("Expected UnknownOutputLabel error, got {other:?}"),
+        for model in [
+            AssayErrorModel::additive(poly(1.0), Factor::Fixed(5.0)),
+            AssayErrorModel::proportional(poly(1.0), Factor::Fixed(5.0)),
+        ] {
+            assert_eq!(model.factor(), 5.0);
+            assert!(model.is_factor_fixed());
+            assert!(!model.optimize());
         }
+        assert!(AssayErrorModel::additive(poly(1.0), 1.0).is_additive());
+        assert!(AssayErrorModel::proportional(poly(1.0), 1.0).is_proportional());
     }
 
     #[test]
-    fn test_error_models_add_duplicate_numeric_label_fails() {
-        let model1 = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let model2 = AssayErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
+    fn factor_value_and_state_change_independently() {
+        let mut model = AssayErrorModel::proportional(poly(1.0), 2.0);
+        model.set_factor(4.0);
+        assert_eq!(model.factor_param(), Factor::Variable(4.0));
 
-        let result = OutputModels::new().add(0, model1).unwrap().add(0, model2); // Same outeq should fail
-
-        assert!(result.is_err());
-        match result {
-            Err(ErrorModelError::ExistingOutputLabel(label)) => assert_eq!(label, "0"),
-            _ => panic!("Expected ExistingOutputLabel error"),
-        }
-    }
-
-    #[test]
-    fn test_error_models_factor() {
-        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = OutputModels::new().add(0, model).unwrap();
-
-        assert_eq!(models.factor(0).unwrap(), 5.0);
-    }
-
-    #[test]
-    fn test_error_models_factor_unknown_label() {
-        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = OutputModels::new().add(0, model).unwrap();
-
-        let result = models.factor(1);
-        assert!(result.is_err());
-        match result {
-            Err(ErrorModelError::UnknownOutputLabel(label)) => assert_eq!(label, "1"),
-            _ => panic!("Expected UnknownOutputLabel error"),
-        }
-    }
-
-    #[test]
-    fn test_error_models_set_factor() {
-        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let mut models = OutputModels::new().add(0, model).unwrap();
-
-        assert_eq!(models.factor(0).unwrap(), 5.0);
-        models.set_factor(0, 10.0).unwrap();
-        assert_eq!(models.factor(0).unwrap(), 10.0);
-    }
-
-    #[test]
-    fn test_error_models_set_factor_unknown_label() {
-        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let mut models = OutputModels::new().add(0, model).unwrap();
-
-        let result = models.set_factor(1, 10.0);
-        assert!(result.is_err());
-        match result {
-            Err(ErrorModelError::UnknownOutputLabel(label)) => assert_eq!(label, "1"),
-            _ => panic!("Expected UnknownOutputLabel error"),
-        }
-    }
-
-    #[test]
-    fn test_error_models_errorpoly() {
-        let poly = ErrorPoly::new(1.0, 2.0, 3.0, 4.0);
-        let model = AssayErrorModel::additive(poly, 5.0);
-        let models = OutputModels::new().add(0, model).unwrap();
-
-        let retrieved_poly = models.errorpoly(0).unwrap();
-        assert_eq!(retrieved_poly.coefficients(), (1.0, 2.0, 3.0, 4.0));
-    }
-
-    #[test]
-    fn test_error_models_errorpoly_unknown_label() {
-        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = OutputModels::new().add(0, model).unwrap();
-
-        let result = models.errorpoly(1);
-        assert!(result.is_err());
-        match result {
-            Err(ErrorModelError::UnknownOutputLabel(label)) => assert_eq!(label, "1"),
-            _ => panic!("Expected UnknownOutputLabel error"),
-        }
-    }
-
-    #[test]
-    fn test_error_models_set_errorpoly() {
-        let poly1 = ErrorPoly::new(1.0, 2.0, 3.0, 4.0);
-        let poly2 = ErrorPoly::new(5.0, 6.0, 7.0, 8.0);
-        let model = AssayErrorModel::additive(poly1, 5.0);
-        let mut models = OutputModels::new().add(0, model).unwrap();
-
-        assert_eq!(
-            models.errorpoly(0).unwrap().coefficients(),
-            (1.0, 2.0, 3.0, 4.0)
-        );
-        models.set_errorpoly(0, poly2).unwrap();
-        assert_eq!(
-            models.errorpoly(0).unwrap().coefficients(),
-            (5.0, 6.0, 7.0, 8.0)
-        );
-    }
-
-    #[test]
-    fn test_error_models_set_errorpoly_unknown_label() {
-        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let mut models = OutputModels::new().add(0, model).unwrap();
-
-        let result = models.set_errorpoly(1, ErrorPoly::new(5.0, 6.0, 7.0, 8.0));
-        assert!(result.is_err());
-        match result {
-            Err(ErrorModelError::UnknownOutputLabel(label)) => assert_eq!(label, "1"),
-            _ => panic!("Expected UnknownOutputLabel error"),
-        }
-    }
-
-    #[test]
-    fn test_error_models_sigma() {
-        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = OutputModels::new().add(0, model).unwrap();
-
-        let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
-        let prediction = observation.to_prediction(10.0, vec![]);
-
-        // Non-parametric: sigma from observation
-        let sigma = models.sigma(&prediction).unwrap();
-        assert_eq!(sigma, (26.0_f64).sqrt());
-    }
-
-    #[test]
-    fn test_error_models_sigma_unknown_label() {
-        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = OutputModels::new().add(0, model).unwrap();
-
-        let observation = Observation::new(0.0, Some(20.0), 1, None, 0, Censor::None); // outeq=1 not in models
-        let prediction = observation.to_prediction(10.0, vec![]);
-
-        let result = models.sigma(&prediction);
-        assert!(result.is_err());
-        match result {
-            Err(ErrorModelError::UnknownOutputLabel(label)) => assert_eq!(label, "1"),
-            _ => panic!("Expected UnknownOutputLabel error"),
-        }
-    }
-
-    #[test]
-    fn test_error_models_variance() {
-        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = OutputModels::new().add(0, model).unwrap();
-
-        let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
-        let prediction = observation.to_prediction(10.0, vec![]);
-
-        let variance = models.variance(&prediction).unwrap();
-        let expected_sigma = (26.0_f64).sqrt();
-        assert_eq!(variance, expected_sigma.powi(2));
-    }
-
-    #[test]
-    fn test_error_models_variance_unknown_label() {
-        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = OutputModels::new().add(0, model).unwrap();
-
-        let observation = Observation::new(0.0, Some(20.0), 1, None, 0, Censor::None); // outeq=1 not in models
-        let prediction = observation.to_prediction(10.0, vec![]);
-
-        let result = models.variance(&prediction);
-        assert!(result.is_err());
-        match result {
-            Err(ErrorModelError::UnknownOutputLabel(label)) => assert_eq!(label, "1"),
-            _ => panic!("Expected UnknownOutputLabel error"),
-        }
-    }
-
-    #[test]
-    fn test_error_models_sigma_from_value() {
-        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = OutputModels::new().add(0, model).unwrap();
-
-        let sigma = models.sigma_from_value(0, 20.0).unwrap();
-        assert_eq!(sigma, (26.0_f64).sqrt());
-    }
-
-    #[test]
-    fn test_error_models_sigma_from_value_unknown_label() {
-        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = OutputModels::new().add(0, model).unwrap();
-
-        let result = models.sigma_from_value(1, 20.0);
-        assert!(result.is_err());
-        match result {
-            Err(ErrorModelError::UnknownOutputLabel(label)) => assert_eq!(label, "1"),
-            _ => panic!("Expected UnknownOutputLabel error"),
-        }
-    }
-
-    #[test]
-    fn test_error_models_variance_from_value() {
-        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = OutputModels::new().add(0, model).unwrap();
-
-        let variance = models.variance_from_value(0, 20.0).unwrap();
-        let expected_sigma = (26.0_f64).sqrt();
-        assert_eq!(variance, expected_sigma.powi(2));
-    }
-
-    #[test]
-    fn test_error_models_variance_from_value_unknown_label() {
-        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let models = OutputModels::new().add(0, model).unwrap();
-
-        let result = models.variance_from_value(1, 20.0);
-        assert!(result.is_err());
-        match result {
-            Err(ErrorModelError::UnknownOutputLabel(label)) => assert_eq!(label, "1"),
-            _ => panic!("Expected UnknownOutputLabel error"),
-        }
-    }
-
-    #[test]
-    fn test_error_models_hash_consistency() {
-        let model1 = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let model2 = AssayErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
-
-        let models1 = OutputModels::new()
-            .add(0, model1.clone())
-            .unwrap()
-            .add(1, model2.clone())
-            .unwrap();
-
-        let models2 = OutputModels::new()
-            .add(0, model1)
-            .unwrap()
-            .add(1, model2)
-            .unwrap();
-
-        // Same models should produce same hash
-        assert_eq!(models1.hash(), models2.hash());
-    }
-
-    #[test]
-    fn test_error_models_hash_order_independence() {
-        let model1 = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let model2 = AssayErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
-
-        // Add in different orders
-        let models1 = OutputModels::new()
-            .add(0, model1.clone())
-            .unwrap()
-            .add(1, model2.clone())
-            .unwrap();
-
-        let models2 = OutputModels::new()
-            .add(1, model2)
-            .unwrap()
-            .add(0, model1)
-            .unwrap();
-
-        // Hash should be the same regardless of insertion order
-        assert_eq!(models1.hash(), models2.hash());
-    }
-
-    #[test]
-    fn test_error_models_multiple_outeqs() {
-        let additive_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 0.5);
-        let proportional_model =
-            AssayErrorModel::proportional(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.1);
-
-        let models = OutputModels::new()
-            .add(0, additive_model)
-            .unwrap()
-            .add(1, proportional_model)
-            .unwrap();
-
-        assert_eq!(models.len(), 2);
-
-        // Test factor retrieval for different outeqs
-        assert_eq!(models.factor(0).unwrap(), 0.5);
-        assert_eq!(models.factor(1).unwrap(), 0.1);
-
-        // Test polynomial retrieval for different outeqs
-        assert_eq!(
-            models.errorpoly(0).unwrap().coefficients(),
-            (1.0, 0.1, 0.0, 0.0)
-        );
-        assert_eq!(
-            models.errorpoly(1).unwrap().coefficients(),
-            (0.0, 0.05, 0.0, 0.0)
-        );
-    }
-
-    #[test]
-    fn test_error_models_with_predictions_different_outeqs() {
-        let additive_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let proportional_model =
-            AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
-
-        let models = OutputModels::new()
-            .add(0, additive_model)
-            .unwrap()
-            .add(1, proportional_model)
-            .unwrap();
-
-        // Test with outeq=0 (additive model)
-        let obs1 = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
-        let pred1 = obs1.to_prediction(10.0, vec![]);
-        let sigma1 = models.sigma(&pred1).unwrap();
-        assert_eq!(sigma1, (26.0_f64).sqrt()); // additive: sqrt(alpha^2 + lambda^2) = sqrt(1^2 + 5^2) = sqrt(26)
-
-        // Test with outeq=1 (proportional model)
-        let obs2 = Observation::new(0.0, Some(20.0), 1, None, 0, Censor::None);
-        let pred2 = obs2.to_prediction(10.0, vec![]);
-        let sigma2 = models.sigma(&pred2).unwrap();
-        assert_eq!(sigma2, 2.0); // proportional: gamma * alpha = 2 * 1 = 2
-    }
-
-    #[test]
-    fn test_factor_param_new_constructors() {
-        // Test variable constructors (default behavior)
-        let additive = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        assert_eq!(additive.factor().unwrap(), 5.0);
-        assert!(!additive.is_factor_fixed().unwrap());
-
-        let proportional = AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
-        assert_eq!(proportional.factor().unwrap(), 2.0);
-        assert!(!proportional.is_factor_fixed().unwrap());
-
-        // Test fixed constructors
-        let additive_fixed =
-            AssayErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        assert_eq!(additive_fixed.factor().unwrap(), 5.0);
-        assert!(additive_fixed.is_factor_fixed().unwrap());
-
-        let proportional_fixed =
-            AssayErrorModel::proportional_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
-        assert_eq!(proportional_fixed.factor().unwrap(), 2.0);
-        assert!(proportional_fixed.is_factor_fixed().unwrap());
-
-        // Test Factor constructors
-        let additive_with_param = AssayErrorModel::additive_with_param(
-            ErrorPoly::new(1.0, 0.0, 0.0, 0.0),
-            Factor::Fixed(5.0),
-        );
-        assert_eq!(additive_with_param.factor().unwrap(), 5.0);
-        assert!(additive_with_param.is_factor_fixed().unwrap());
-
-        let proportional_with_param = AssayErrorModel::proportional_with_param(
-            ErrorPoly::new(1.0, 0.0, 0.0, 0.0),
-            Factor::Variable(2.0),
-        );
-        assert_eq!(proportional_with_param.factor().unwrap(), 2.0);
-        assert!(!proportional_with_param.is_factor_fixed().unwrap());
-    }
-
-    #[test]
-    fn test_factor_param_methods() {
-        let mut model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-
-        // Test initial state
-        assert_eq!(model.factor().unwrap(), 5.0);
-        assert!(!model.is_factor_fixed().unwrap());
-
-        // Test fixing parameter
         model.fix_factor();
-        assert_eq!(model.factor().unwrap(), 5.0);
-        assert!(model.is_factor_fixed().unwrap());
+        assert_eq!(model.factor_param(), Factor::Fixed(4.0));
+        model.set_factor(3.0);
+        assert_eq!(model.factor_param(), Factor::Fixed(3.0));
 
-        // Test unfixing parameter
         model.unfix_factor();
-        assert_eq!(model.factor().unwrap(), 5.0);
-        assert!(!model.is_factor_fixed().unwrap());
-
-        // Test setting factor param directly
-        model.set_factor_param(Factor::Fixed(10.0));
-        assert_eq!(model.factor().unwrap(), 10.0);
-        assert!(model.is_factor_fixed().unwrap());
-
-        // Test getting factor param
-        let param = model.factor_param().unwrap();
-        assert_eq!(param.value(), 10.0);
-        assert!(param.is_fixed());
+        assert_eq!(model.factor_param(), Factor::Variable(3.0));
+        model.set_factor_param(Factor::Fixed(1.5));
+        assert!(model.is_factor_fixed());
+        assert_eq!(model.factor(), 1.5);
+        // A fixed factor still enters sigma.
+        assert_eq!(model.sigma(&prediction(Some(1.0), None)).unwrap(), 1.5);
     }
 
     #[test]
-    fn test_factor_param_functionality() {
-        let mut param = Factor::Variable(5.0);
-
-        // Test basic functionality
-        assert_eq!(param.value(), 5.0);
-        assert!(param.is_variable());
-        assert!(!param.is_fixed());
-
-        // Test setting value
-        param.set_value(10.0);
-        assert_eq!(param.value(), 10.0);
-        assert!(param.is_variable());
-
-        // Test making fixed
-        param.make_fixed();
-        assert_eq!(param.value(), 10.0);
-        assert!(param.is_fixed());
-        assert!(!param.is_variable());
-
-        // Test making variable again
-        param.make_variable();
-        assert_eq!(param.value(), 10.0);
-        assert!(param.is_variable());
-        assert!(!param.is_fixed());
+    fn factor_helpers() {
+        let mut factor = Factor::Variable(1.0);
+        factor.make_fixed();
+        assert!(factor.is_fixed());
+        factor.set_value(2.0);
+        assert_eq!(factor, Factor::Fixed(2.0));
+        factor.make_variable();
+        assert!(factor.is_variable());
+        factor.set_factor(&Factor::Fixed(3.0));
+        assert_eq!(factor, Factor::Fixed(3.0));
+        assert_eq!(Factor::from(0.5), Factor::Variable(0.5));
     }
 
     #[test]
-    fn test_error_models_factor_param_methods() {
-        let additive_model =
-            AssayErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let proportional_model =
-            AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
-
-        let mut models = OutputModels::new()
-            .add(0, additive_model)
-            .unwrap()
-            .add(1, proportional_model)
-            .unwrap();
-
-        // Test factor param retrieval
-        let param0 = models.factor_param(0).unwrap();
-        assert_eq!(param0.value(), 5.0);
-        assert!(param0.is_fixed());
-
-        let param1 = models.factor_param(1).unwrap();
-        assert_eq!(param1.value(), 2.0);
-        assert!(param1.is_variable());
-
-        // Test is_factor_fixed
-        assert!(models.is_factor_fixed(0).unwrap());
-        assert!(!models.is_factor_fixed(1).unwrap());
-
-        // Test fixing/unfixing
-        models.fix_factor(1).unwrap();
-        assert!(models.is_factor_fixed(1).unwrap());
-
-        models.unfix_factor(0).unwrap();
-        assert!(!models.is_factor_fixed(0).unwrap());
-
-        // Test setting factor param
-        models.set_factor_param(0, Factor::Fixed(10.0)).unwrap();
-        assert_eq!(models.factor(0).unwrap(), 10.0);
-        assert!(models.is_factor_fixed(0).unwrap());
-    }
-
-    #[test]
-    fn test_fixed_parameters_in_calculations() {
-        // Test that fixed and variable parameters produce the same calculation results
-        let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
-        let prediction = observation.to_prediction(10.0, vec![]);
-
-        let model_variable = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let model_fixed = AssayErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-
-        let sigma_variable = model_variable.sigma(&prediction).unwrap();
-        let sigma_fixed = model_fixed.sigma(&prediction).unwrap();
-
-        assert_eq!(sigma_variable, sigma_fixed);
-        assert_eq!(sigma_variable, (26.0_f64).sqrt());
-
-        // Test with sigma_from_value
-        let sigma_variable_val = model_variable.sigma_from_value(20.0).unwrap();
-        let sigma_fixed_val = model_fixed.sigma_from_value(20.0).unwrap();
-
-        assert_eq!(sigma_variable_val, sigma_fixed_val);
-        assert_eq!(sigma_variable_val, (26.0_f64).sqrt());
-    }
-
-    #[test]
-    fn test_hash_includes_fixed_state() {
-        let model1_variable = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let model1_fixed = AssayErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-
-        let models1 = OutputModels::new().add(0, model1_variable).unwrap();
-        let models2 = OutputModels::new().add(0, model1_fixed).unwrap();
-
-        // Different fixed/variable states should produce different hashes
-        assert_ne!(models1.hash(), models2.hash());
-    }
-
-    #[test]
-    fn test_error_models_into_iter_functionality() {
-        let additive_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let proportional_model =
-            AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
-
-        let mut models = OutputModels::new()
-            .add(0, additive_model)
-            .unwrap()
-            .add(1, proportional_model)
-            .unwrap();
-
-        // Verify initial state - both should be variable
-        assert!(!models.is_factor_fixed(0).unwrap());
-        assert!(!models.is_factor_fixed(1).unwrap());
-        assert_eq!(models.factor(0).unwrap(), 5.0);
-        assert_eq!(models.factor(1).unwrap(), 2.0);
-
-        // First iteration: update values using iter_mut
-        for (outeq, model) in models.iter_mut() {
-            match outeq.as_str() {
-                "0" => model.assay_mut().unwrap().set_factor(10.0), // Update additive lambda from 5.0 to 10.0
-                "1" => model.assay_mut().unwrap().set_factor(4.0), // Update proportional gamma from 2.0 to 4.0
-                _ => {}
-            }
+    fn hash_covers_type_value_state_and_polynomial() {
+        let base = AssayErrorModel::additive(poly(1.0), 5.0);
+        assert_eq!(hash(&base), hash(&base.clone()));
+        for other in [
+            AssayErrorModel::proportional(poly(1.0), 5.0),
+            AssayErrorModel::additive(poly(1.0), 10.0),
+            AssayErrorModel::additive(poly(1.0), Factor::Fixed(5.0)),
+            AssayErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 5.0),
+        ] {
+            assert_ne!(hash(&base), hash(&other), "{other:?}");
         }
-
-        // Verify values were updated
-        assert_eq!(models.factor(0).unwrap(), 10.0);
-        assert_eq!(models.factor(1).unwrap(), 4.0);
-        assert!(!models.is_factor_fixed(0).unwrap()); // Still variable
-        assert!(!models.is_factor_fixed(1).unwrap()); // Still variable
-
-        // Second iteration: fix all parameters using iter_mut
-        for (_outeq, model) in models.iter_mut() {
-            model.assay_mut().unwrap().fix_factor();
-        }
-
-        // Verify all parameters are now fixed
-        assert!(models.is_factor_fixed(0).unwrap());
-        assert!(models.is_factor_fixed(1).unwrap());
-        assert_eq!(models.factor(0).unwrap(), 10.0); // Values should remain the same
-        assert_eq!(models.factor(1).unwrap(), 4.0);
-
-        // Test read-only iteration with iter()
-        let mut count = 0;
-        for (outeq, model) in models.iter() {
-            count += 1;
-            match outeq.as_str() {
-                "0" => {
-                    assert!(model.assay().unwrap().is_factor_fixed().unwrap());
-                    assert_eq!(model.assay().unwrap().factor().unwrap(), 10.0);
-                }
-                "1" => {
-                    assert!(model.assay().unwrap().is_factor_fixed().unwrap());
-                    assert_eq!(model.assay().unwrap().factor().unwrap(), 4.0);
-                }
-                _ => panic!("Unexpected outeq: {}", outeq),
-            }
-        }
-        assert_eq!(count, 2);
-
-        // Test consuming iteration with into_iter()
-        let collected_models: Vec<(OutputLabel, AssayErrorModel)> = models
-            .into_iter()
-            .map(|(label, model)| (label, model.assay().unwrap().clone()))
-            .collect();
-        assert_eq!(collected_models.len(), 2);
-
-        // Verify the collected models retain their state
-        let (outeq0, model0) = &collected_models[0];
-        let (outeq1, model1) = &collected_models[1];
-
-        assert_eq!(*outeq0, 0);
-        assert_eq!(*outeq1, 1);
-        assert!(model0.is_factor_fixed().unwrap());
-        assert!(model1.is_factor_fixed().unwrap());
-        assert_eq!(model0.factor().unwrap(), 10.0);
-        assert_eq!(model1.factor().unwrap(), 4.0);
     }
 
     #[test]
-    fn error_model_hash_deterministic() {
-        let models = OutputModels::new()
-            .add(
-                0,
-                AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
-            )
-            .unwrap();
-        assert_eq!(models.hash(), models.hash());
-    }
-
-    #[test]
-    fn error_model_hash_differs_on_value() {
-        let a = OutputModels::new()
-            .add(
-                0,
-                AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
-            )
-            .unwrap();
-        let b = OutputModels::new()
-            .add(
-                0,
-                AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 10.0),
-            )
-            .unwrap();
-        assert_ne!(a.hash(), b.hash());
-    }
-
-    #[test]
-    fn numeric_and_text_labels_name_the_same_output() {
+    fn models_are_reached_by_exact_label() {
         let mut models = OutputModels::new()
-            .add(
-                1,
-                AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0),
-            )
+            .add(1, AssayErrorModel::proportional(poly(1.0), 2.0))
             .unwrap();
-        assert!(!models.is_empty());
+        assert!(matches!(
+            OutputModels::new()
+                .add("cp", AssayErrorModel::additive(poly(1.0), 5.0))
+                .unwrap()
+                .add("cp", AssayErrorModel::proportional(poly(2.0), 3.0)),
+            Err(ErrorModelError::ExistingOutputLabel(label)) if label == "cp"
+        ));
 
         // `1` and `"1"` are the same label; `"01"` is a different one.
         assert!(models.contains(1) && models.contains("1"));
         assert!(!models.contains("01"));
         assert_eq!(models.get(1), models.get("1"));
         assert!(models.output_model("01").is_err());
-        assert!(models.is_proportional("1") && !models.is_additive(1));
-        assert!(!models.is_proportional("01"));
+        assert!(matches!(
+            models.factor("01"),
+            Err(ErrorModelError::UnknownOutputLabel(label)) if label == "01"
+        ));
 
         // Changes through one spelling are seen through the other.
-        models
-            .get_mut(1)
-            .and_then(OutputModel::assay_mut)
-            .unwrap()
-            .set_factor(3.0);
+        models.set_factor(1, 3.0).unwrap();
         assert_eq!(models.factor("1").unwrap(), 3.0);
 
         // Iterating `&mut` reaches every model, as an optimizer loop would.
         for (_, model) in &mut models {
             model.assay_mut().unwrap().fix_factor();
         }
-        assert!(models.is_factor_fixed("1").unwrap());
+        assert!(models.get("1").unwrap().assay().unwrap().is_factor_fixed());
         assert_eq!((&models).into_iter().count(), 1);
-    }
-
-    #[test]
-    fn error_model_hash_differs_on_polynomial() {
-        for model in [
-            AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
-            AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
-        ] {
-            let a = OutputModels::new().add("cp", model).unwrap();
-            let mut b = a.clone();
-            b.set_errorpoly("cp", ErrorPoly::new(1.0, 0.1, 0.0, 0.0))
-                .unwrap();
-            assert_ne!(a.hash(), b.hash());
-        }
-    }
-
-    #[test]
-    fn error_model_hash_differs_on_type() {
-        let a = OutputModels::new()
-            .add(
-                0,
-                AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
-            )
-            .unwrap();
-        let b = OutputModels::new()
-            .add(
-                0,
-                AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
-            )
-            .unwrap();
-        assert_ne!(a.hash(), b.hash());
+        assert_eq!(models.into_iter().count(), 1);
     }
 }

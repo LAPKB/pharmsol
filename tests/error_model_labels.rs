@@ -170,24 +170,22 @@ fn an_observed_output_without_an_error_model_is_reported_by_label() -> Result<()
     let data = observed_data();
     let subject = &data.subjects()[0];
 
-    // `effect` is observed, but explicitly has no error model.
-    let mut error_models = OutputModels::new()
-        .add(
-            "cp",
-            AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.5),
-        )?
-        .add("effect", AssayErrorModel::None)?;
+    // `effect` is observed, but has no error model.
+    let mut error_models = OutputModels::new().add(
+        "cp",
+        AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.5),
+    )?;
 
-    let none_for_effect = |error: &ErrorModelError| matches!(error, ErrorModelError::NoneErrorModel(label) if label == "effect");
+    let unknown_effect = |error: &ErrorModelError| matches!(error, ErrorModelError::UnknownOutputLabel(label) if label == "effect");
 
     match ode.log_likelihood(subject, &parameters(&ode), &error_models) {
-        Err(PharmsolError::ErrorModelError(error)) if none_for_effect(&error) => {}
-        other => panic!("expected NoneErrorModel(`effect`), got {other:?}"),
+        Err(PharmsolError::ErrorModelError(error)) if unknown_effect(&error) => {}
+        other => panic!("expected UnknownOutputLabel(`effect`), got {other:?}"),
     }
 
     // An optimizer cannot read or move a factor that does not exist.
-    assert!(matches!(error_models.factor("effect"), Err(e) if none_for_effect(&e)));
-    assert!(matches!(error_models.set_factor("effect", 1.0), Err(e) if none_for_effect(&e)));
+    assert!(matches!(error_models.factor("effect"), Err(e) if unknown_effect(&e)));
+    assert!(matches!(error_models.set_factor("effect", 1.0), Err(e) if unknown_effect(&e)));
     assert_eq!(error_models.factor("cp")?, 0.5);
     Ok(())
 }

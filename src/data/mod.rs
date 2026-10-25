@@ -24,8 +24,9 @@
 //! - [`Event`], [`Bolus`], [`Infusion`], and [`Observation`] for explicit
 //!   event-level control.
 //! - [`Covariate`] and [`Covariates`] for time-varying subject characteristics.
-//! - [`ErrorModel`], [`ResidualErrorModel`], and [`ObservationError`] for the
-//!   different error surfaces used by downstream workflows.
+//! - [`OutputModels`] (one [`OutputModel`] per output) for how observations
+//!   are distributed around predictions, and [`ObservationError`] for invalid
+//!   observation data.
 //!
 //! # Choose A Data Input Path
 //!
@@ -54,12 +55,13 @@
 //!
 //! # Error Surfaces
 //!
-//! This module exposes three related but different error families:
+//! This module exposes two related but different error families:
 //!
-//! - [`ErrorModel`] for assay or measurement error driven by the observation
-//!   value, commonly used in non-parametric workflows.
-//! - [`ResidualErrorModel`] for residual unexplained variability driven by the
-//!   prediction value, commonly used in parametric workflows.
+//! - [`OutputModels`] for the likelihood of observations. Each output's
+//!   [`OutputModel`] takes sigma from the observation ([`AssayErrorModel`],
+//!   commonly used in non-parametric workflows) or from the prediction
+//!   ([`ResidualErrorModel`], commonly used in parametric workflows), and
+//!   picks a distribution and a transform.
 //! - [`ObservationError`] for invalid or insufficient observation data during
 //!   profile construction and related preprocessing.
 //!

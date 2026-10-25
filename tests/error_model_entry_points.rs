@@ -220,7 +220,11 @@ fn assert_sde_cache_sees_polynomial_changes(
     );
 
     // Change only the polynomial; gamma/lambda and its fixed state stay put.
-    error_models.set_errorpoly("cp", ErrorPoly::new(5.0, 0.0, 0.0, 0.0))?;
+    error_models
+        .get_mut("cp")
+        .and_then(OutputModel::assay_mut)
+        .expect("cp has assay error")
+        .set_errorpoly(ErrorPoly::new(5.0, 0.0, 0.0, 0.0));
     let after = sde.log_likelihood(&subject, &parameters, &error_models)?;
     assert!(
         (after - first).abs() > 1e-6,

@@ -45,7 +45,7 @@ use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
 
-use crate::data::error_model::{self, AssayErrorModel, ErrorModelError, ErrorPoly, Factor};
+use crate::data::error_model::{self, AssayErrorModel, ErrorModelError, ErrorPoly};
 use crate::data::event::OutputLabel;
 use crate::data::residual_error::{self, ResidualErrorModel};
 use crate::simulator::likelihood::distributions;
@@ -384,11 +384,10 @@ impl From<Scale> for OutputModel {
 /// position (`"0"`, `"1"`, ...), like the observation labels resolved against
 /// them.
 ///
-/// The assay helpers ([`Self::factor`], [`Self::set_factor`],
-/// [`Self::errorpoly`], ...) reach the [`AssayErrorModel`] of an output whose
-/// sigma comes from the observation, and fail with
-/// [`ErrorModelError::NotAssayError`] for one whose sigma comes from the
-/// prediction.
+/// [`Self::factor`] and [`Self::set_factor`] reach the assay factor (λ or γ)
+/// of an output by label, as an NPAG loop does. Anything else about an
+/// output's model goes through [`Self::get`] or [`Self::get_mut`] and the
+/// [`OutputModel`] accessors.
 ///
 /// ```rust
 /// # use pharmsol::prelude::*;
@@ -397,11 +396,15 @@ impl From<Scale> for OutputModel {
 ///
 /// for (label, model) in models.iter_mut() {
 ///     if let Some(assay) = model.assay_mut().filter(|assay| assay.optimize()) {
-///         assay.set_factor(assay.factor()? * 2.0);
+///         assay.set_factor(assay.factor() * 2.0);
 ///     }
 ///     assert_eq!(label.as_str(), "cp");
 /// }
 /// assert_eq!(models.factor("cp")?, 1.0);
+///
+/// models.set_factor("cp", 0.25)?;
+/// models.get_mut("cp").and_then(OutputModel::assay_mut).unwrap().fix_factor();
+/// assert!(!models.get("cp").and_then(OutputModel::assay).unwrap().optimize());
 /// # Ok::<(), pharmsol::data::error_model::ErrorModelError>(())
 /// ```
 #[derive(Serialize, Debug, Clone, Deserialize, Default, PartialEq)]
@@ -472,28 +475,23 @@ impl OutputModels {
             .ok_or_else(|| ErrorModelError::UnknownOutputLabel(label.to_string()))
     }
 
-    /// The assay model for `outeq`, which must exist, take sigma from the
-    /// observation and not be [AssayErrorModel::None].
+    /// The assay model for `outeq`, which must exist and take sigma from
+    /// the observation.
     fn assay(&self, outeq: impl ToString) -> Result<&AssayErrorModel, ErrorModelError> {
         let label = outeq.to_string();
-        match self.model_for(&label)?.assay() {
-            None => Err(ErrorModelError::NotAssayError(label)),
-            Some(AssayErrorModel::None) => Err(ErrorModelError::NoneErrorModel(label)),
-            Some(model) => Ok(model),
-        }
+        self.model_for(&label)?
+            .assay()
+            .ok_or(ErrorModelError::NotAssayError(label))
     }
 
     /// Mutable [`Self::assay`].
     fn assay_mut(&mut self, outeq: impl ToString) -> Result<&mut AssayErrorModel, ErrorModelError> {
         let label = outeq.to_string();
-        let model = self
-            .models
-            .get_mut(label.as_str())
-            .ok_or_else(|| ErrorModelError::UnknownOutputLabel(label.clone()))?;
-        match model.assay_mut() {
-            None => Err(ErrorModelError::NotAssayError(label)),
-            Some(AssayErrorModel::None) => Err(ErrorModelError::NoneErrorModel(label)),
-            Some(model) => Ok(model),
+        match self.models.get_mut(label.as_str()) {
+            None => Err(ErrorModelError::UnknownOutputLabel(label)),
+            Some(model) => model
+                .assay_mut()
+                .ok_or(ErrorModelError::NotAssayError(label)),
         }
     }
 
@@ -544,94 +542,21 @@ impl OutputModels {
         Ok(self.sigma(prediction)?.powi(2))
     }
 
-    /// The assay error polynomial for an output label.
-    pub fn errorpoly(&self, outeq: impl ToString) -> Result<ErrorPoly, ErrorModelError> {
-        self.assay(outeq)?.errorpoly()
-    }
-
-    /// The assay factor (gamma or lambda) for an output label.
+    /// The assay factor (lambda or gamma) of an output.
+    ///
+    /// # Errors
+    /// [ErrorModelError::UnknownOutputLabel] for an output without a model,
+    /// [ErrorModelError::NotAssayError] for one whose sigma comes from the
+    /// prediction.
     pub fn factor(&self, outeq: impl ToString) -> Result<f64, ErrorModelError> {
-        self.assay(outeq)?.factor()
+        Ok(self.assay(outeq)?.factor())
     }
 
-    /// Set the assay error polynomial for an output label.
-    pub fn set_errorpoly(
-        &mut self,
-        outeq: impl ToString,
-        poly: ErrorPoly,
-    ) -> Result<(), ErrorModelError> {
-        self.assay_mut(outeq)?.set_errorpoly(poly);
-        Ok(())
-    }
-
-    /// Set the assay factor (gamma or lambda) for an output label.
+    /// Set the assay factor (lambda or gamma) of an output, keeping whether
+    /// it is fixed. Errors as [`Self::factor`] does.
     pub fn set_factor(&mut self, outeq: impl ToString, factor: f64) -> Result<(), ErrorModelError> {
         self.assay_mut(outeq)?.set_factor(factor);
         Ok(())
-    }
-
-    /// The assay factor, with its fixed/variable state, for an output label.
-    pub fn factor_param(&self, outeq: impl ToString) -> Result<Factor, ErrorModelError> {
-        self.assay(outeq)?.factor_param()
-    }
-
-    /// Set the assay factor, with its fixed/variable state, for an output label.
-    pub fn set_factor_param(
-        &mut self,
-        outeq: impl ToString,
-        param: Factor,
-    ) -> Result<(), ErrorModelError> {
-        self.assay_mut(outeq)?.set_factor_param(param);
-        Ok(())
-    }
-
-    /// Whether the assay factor is fixed for an output label.
-    pub fn is_factor_fixed(&self, outeq: impl ToString) -> Result<bool, ErrorModelError> {
-        self.assay(outeq)?.is_factor_fixed()
-    }
-
-    /// Fix the assay factor at its current value for an output label.
-    pub fn fix_factor(&mut self, outeq: impl ToString) -> Result<(), ErrorModelError> {
-        self.assay_mut(outeq)?.fix_factor();
-        Ok(())
-    }
-
-    /// Make the assay factor variable at its current value for an output label.
-    pub fn unfix_factor(&mut self, outeq: impl ToString) -> Result<(), ErrorModelError> {
-        self.assay_mut(outeq)?.unfix_factor();
-        Ok(())
-    }
-
-    /// Whether the output's assay error model is proportional.
-    pub fn is_proportional(&self, outeq: impl ToString) -> bool {
-        self.get(outeq)
-            .and_then(OutputModel::assay)
-            .is_some_and(AssayErrorModel::is_proportional)
-    }
-
-    /// Whether the output's assay error model is additive.
-    pub fn is_additive(&self, outeq: impl ToString) -> bool {
-        self.get(outeq)
-            .and_then(OutputModel::assay)
-            .is_some_and(AssayErrorModel::is_additive)
-    }
-
-    /// Assay sigma for an output label and observed value.
-    pub fn sigma_from_value(
-        &self,
-        outeq: impl ToString,
-        value: f64,
-    ) -> Result<f64, ErrorModelError> {
-        self.assay(outeq)?.sigma_from_value(value)
-    }
-
-    /// Assay variance for an output label and observed value.
-    pub fn variance_from_value(
-        &self,
-        outeq: impl ToString,
-        value: f64,
-    ) -> Result<f64, ErrorModelError> {
-        self.assay(outeq)?.variance_from_value(value)
     }
 }
 
@@ -645,11 +570,8 @@ impl ObservationModel for OutputModels {
         censoring: Censor,
         errorpoly: Option<ErrorPoly>,
     ) -> Result<f64, PharmsolError> {
-        let model = self.model_for(outeq.as_str())?;
-        if let Some(AssayErrorModel::None) = model.assay() {
-            return Err(ErrorModelError::NoneErrorModel(outeq.to_string()).into());
-        }
-        model.log_density(observation, prediction, censoring, errorpoly)
+        self.model_for(outeq.as_str())?
+            .log_density(observation, prediction, censoring, errorpoly)
     }
 
     fn labels(&self) -> Box<dyn Iterator<Item = &OutputLabel> + '_> {
