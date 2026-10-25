@@ -130,8 +130,10 @@ pub use crate::simulator::equation::{
     self,
     ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
     Analytical, AnalyticalKernel, Cache, Equation, ModelKind, ModelMetadata, ModelMetadataError,
-    NameDomain, Predictions, RouteInputPolicy, RouteKind, ValidatedModelMetadata, ODE, SDE,
+    NameDomain, PointPredictions, RouteInputPolicy, RouteKind, Simulation, ValidatedModelMetadata,
+    ODE, SDE,
 };
+pub use crate::simulator::likelihood::{ObservationModel, ParticlePredictions};
 pub use error::PharmsolError;
 pub use nalgebra::dmatrix;
 pub use parameters::{ParameterError, ParameterOrder, Parameters};
@@ -360,7 +362,8 @@ pub mod prelude {
             equation::Equation,
             likelihood::{
                 log_likelihood_batch, log_likelihood_matrix, log_likelihood_subject, log_psi, psi,
-                PopulationPredictions, Prediction, SubjectPredictions,
+                ObservationModel, ParticlePredictions, PopulationPredictions, Prediction,
+                SubjectPredictions,
             },
         };
     }
@@ -371,9 +374,9 @@ pub mod prelude {
         equation::{
             self,
             ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
-            Equation,
+            Equation, PointPredictions, Simulation,
         },
-        likelihood::{Prediction, SubjectPredictions},
+        likelihood::{ObservationModel, ParticlePredictions, Prediction, SubjectPredictions},
     };
 
     // Analytical model functions

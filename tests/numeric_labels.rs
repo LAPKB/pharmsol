@@ -10,7 +10,7 @@ use approx::assert_relative_eq;
 use ndarray::Array2;
 use pharmsol::prelude::simulator::log_likelihood_batch;
 use pharmsol::prelude::*;
-use pharmsol::{PharmsolError, Predictions, ResidualErrorModel, ResidualErrorModels};
+use pharmsol::{PharmsolError, PointPredictions, ResidualErrorModel, ResidualErrorModels};
 
 const PMETRICS_HEADER: &str = "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3";
 
@@ -77,9 +77,9 @@ fn one_cpt_parameters(model: &equation::ODE) -> Parameters {
     Parameters::with_model(model, [("ke", 0.2), ("v", 10.0)]).expect("valid parameters")
 }
 
-fn prediction_values(predictions: &impl Predictions) -> Vec<f64> {
+fn prediction_values(predictions: &impl PointPredictions) -> Vec<f64> {
     predictions
-        .get_predictions()
+        .point()
         .iter()
         .map(|prediction| prediction.prediction())
         .collect()

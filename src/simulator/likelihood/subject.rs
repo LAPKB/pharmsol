@@ -4,12 +4,14 @@
 //! for a single subject, and [`PopulationPredictions`] for population-level
 //! predictions.
 
+use std::borrow::Cow;
+
 use ndarray::{Array2, ShapeBuilder};
 
-use crate::data::error_model::AssayErrorModels;
-use crate::{PharmsolError, Predictions};
+use crate::{PharmsolError, PointPredictions};
 
 use super::prediction::Prediction;
+use super::ObservationModel;
 
 /// Container for predictions associated with a single subject.
 ///
@@ -20,13 +22,10 @@ pub struct SubjectPredictions {
     predictions: Vec<Prediction>,
 }
 
-impl Predictions for SubjectPredictions {
-    fn get_predictions(&self) -> Vec<Prediction> {
-        self.predictions.clone()
-    }
-
-    fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError> {
-        SubjectPredictions::log_likelihood(self, error_models)
+impl PointPredictions for SubjectPredictions {
+    /// The predictions themselves, borrowed.
+    fn point(&self) -> Cow<'_, [Prediction]> {
+        Cow::Borrowed(&self.predictions)
     }
 }
 
@@ -39,19 +38,17 @@ impl SubjectPredictions {
             .sum()
     }
 
-    /// Calculate the log-likelihood of all predictions given an error model.
+    /// Calculate the log-likelihood of all predictions under an observation
+    /// model.
     ///
     /// This sums the log-likelihood of each prediction to get the joint log-likelihood.
     /// This is numerically stable and avoids underflow issues that can occur
     /// when computing products of small probabilities.
     ///
-    /// # Error Model
-    /// Uses observation-based sigma from [`AssayErrorModels`], which is appropriate
-    /// for non-parametric algorithms (NPAG, NPOD). For parametric algorithms
-    /// (SAEM, FOCE), use [`crate::ResidualErrorModels`] directly.
-    ///
-    /// # Parameters
-    /// - `error_models`: The error models to use for calculating the likelihood
+    /// # Observation Model
+    /// [`crate::AssayErrorModels`] use observation-based sigma, appropriate
+    /// for non-parametric algorithms (NPAG, NPOD); [`crate::ResidualErrorModels`]
+    /// use prediction-based sigma, for parametric algorithms (SAEM, FOCE).
     ///
     /// # Returns
     /// The sum of all individual prediction log-likelihoods.
@@ -61,11 +58,10 @@ impl SubjectPredictions {
     /// ```ignore
     /// let log_lik = subject_predictions.log_likelihood(&error_models)?;
     /// ```
-    pub fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError> {
-        if self.predictions.is_empty() {
-            return Ok(0.0);
-        }
-
+    pub fn log_likelihood<O: ObservationModel + ?Sized>(
+        &self,
+        error_models: &O,
+    ) -> Result<f64, PharmsolError> {
         let mut total = 0.0;
         for prediction in self
             .predictions
@@ -93,7 +89,10 @@ impl SubjectPredictions {
         since = "0.23.0",
         note = "Use log_likelihood() instead for better numerical stability"
     )]
-    pub fn likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError> {
+    pub fn likelihood<O: ObservationModel + ?Sized>(
+        &self,
+        error_models: &O,
+    ) -> Result<f64, PharmsolError> {
         match self.predictions.is_empty() {
             true => Ok(1.0),
             false => {
@@ -114,6 +113,11 @@ impl SubjectPredictions {
     /// Get a reference to the vector of predictions.
     pub fn predictions(&self) -> &Vec<Prediction> {
         &self.predictions
+    }
+
+    /// Take the vector of predictions.
+    pub fn into_predictions(self) -> Vec<Prediction> {
+        self.predictions
     }
 
     /// Return a flat vector of prediction values.
@@ -167,7 +171,7 @@ impl From<Array2<SubjectPredictions>> for PopulationPredictions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::error_model::{AssayErrorModel, ErrorPoly};
+    use crate::data::error_model::{AssayErrorModel, AssayErrorModels, ErrorPoly};
     use crate::data::event::{Observation, OutputLabel};
     use crate::Censor;
 

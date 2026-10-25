@@ -3,7 +3,13 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use crate::{data::event::OutputLabel, simulator::likelihood::Prediction};
+use crate::simulator::likelihood::distributions::{lognormccdf, lognormcdf, lognormpdf};
+use crate::simulator::likelihood::observation::finite;
+use crate::{
+    data::event::OutputLabel,
+    simulator::likelihood::{ObservationModel, Prediction},
+    Censor, PharmsolError,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -426,6 +432,45 @@ impl AssayErrorModels {
     }
 }
 
+/// Tag mixed into [`AssayErrorModels`] cache keys, so they never collide with
+/// another observation model's.
+const ASSAY_CACHE_TAG: u64 = 0x6173_7361_7900_0001;
+
+impl ObservationModel for AssayErrorModels {
+    /// Normal density with sigma from the observed value; censored
+    /// observations use the normal CDF (BLOQ) or survival function (ALOQ).
+    #[inline]
+    fn log_density(
+        &self,
+        outeq: &OutputLabel,
+        observation: f64,
+        prediction: f64,
+        censoring: Censor,
+        errorpoly: Option<ErrorPoly>,
+    ) -> Result<f64, PharmsolError> {
+        let sigma = self
+            .defined_label(outeq.as_str())?
+            .sigma_for(observation, errorpoly)?;
+        let log_density = match censoring {
+            Censor::None => lognormpdf(observation, prediction, sigma),
+            Censor::BLOQ => lognormcdf(observation, prediction, sigma)?,
+            Censor::ALOQ => lognormccdf(observation, prediction, sigma)?,
+        };
+        finite(log_density)
+    }
+
+    fn labels(&self) -> Box<dyn Iterator<Item = &OutputLabel> + '_> {
+        Box::new(self.models.keys())
+    }
+
+    fn cache_key(&self) -> u64 {
+        let mut hasher = ahash::AHasher::default();
+        ASSAY_CACHE_TAG.hash(&mut hasher);
+        self.hash().hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
 impl IntoIterator for AssayErrorModels {
     type Item = (OutputLabel, AssayErrorModel);
     type IntoIter = std::collections::btree_map::IntoIter<OutputLabel, AssayErrorModel>;
@@ -718,12 +763,22 @@ impl AssayErrorModel {
     ///
     /// The estimated standard deviation of the prediction
     pub fn sigma(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
-        if prediction.observation.is_none() {
-            return Err(ErrorModelError::MissingObservation);
-        }
+        let observation = prediction
+            .observation()
+            .ok_or(ErrorModelError::MissingObservation)?;
+        self.sigma_for(observation, prediction.errorpoly())
+    }
 
-        // Get appropriate polynomial coefficients from prediction or default
-        let errorpoly = match prediction.errorpoly() {
+    /// [`Self::sigma`] for an observed value and its error polynomial, if
+    /// it carries one (otherwise the model's own polynomial is used).
+    #[inline]
+    pub(crate) fn sigma_for(
+        &self,
+        observation: f64,
+        errorpoly: Option<ErrorPoly>,
+    ) -> Result<f64, ErrorModelError> {
+        // Get appropriate polynomial coefficients from the observation or default
+        let errorpoly = match errorpoly {
             Some(poly) => poly,
             None => self.errorpoly()?,
         };
@@ -731,10 +786,7 @@ impl AssayErrorModel {
         let (c0, c1, c2, c3) = (errorpoly.c0, errorpoly.c1, errorpoly.c2, errorpoly.c3);
 
         // Calculate alpha term
-        let alpha = c0
-            + c1 * prediction.observation().unwrap()
-            + c2 * prediction.observation().unwrap().powi(2)
-            + c3 * prediction.observation().unwrap().powi(3);
+        let alpha = c0 + c1 * observation + c2 * observation.powi(2) + c3 * observation.powi(3);
 
         // Calculate standard deviation based on error model type
         let sigma = match self {

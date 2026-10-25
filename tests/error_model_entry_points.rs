@@ -70,9 +70,11 @@ fn assert_entry_points_agree(
     let log_likelihood = equation.log_likelihood(&subject, &parameters, &error_models)?;
     assert!(log_likelihood.is_finite(), "{name}: {log_likelihood}");
 
-    let (_, likelihood) = equation.simulate(&subject, &parameters, Some(&error_models))?;
-    let likelihood = likelihood.expect("simulate scores when given error models");
-    assert_relative_eq!(likelihood.ln(), log_likelihood, max_relative = 1e-10);
+    let simulated = equation
+        .simulate(&subject, &parameters, Some(&error_models))?
+        .log_likelihood
+        .expect("simulate scores when given error models");
+    assert_relative_eq!(simulated, log_likelihood, max_relative = 1e-10);
 
     let matrix = log_likelihood_matrix(equation, &data, &support_points, &error_models, false)?;
     assert_relative_eq!(matrix[[0, 0]], log_likelihood, max_relative = 1e-10);
@@ -87,7 +89,7 @@ fn assert_entry_points_agree(
         &format!("{name} simulate"),
         equation
             .simulate(&subject, &parameters, Some(&undeclared))
-            .map(|(_, likelihood)| likelihood),
+            .map(|simulation| simulation.log_likelihood),
         "concentration",
     );
     assert_unknown_label(
@@ -97,9 +99,9 @@ fn assert_entry_points_agree(
     );
 
     // Predictions without error models are still available.
-    let (predictions, likelihood) = equation.simulate(&subject, &parameters, None)?;
-    assert!(likelihood.is_none());
-    drop(predictions);
+    let simulation = equation.simulate(&subject, &parameters, None)?;
+    assert!(simulation.log_likelihood.is_none());
+    assert!(!simulation.predictions.point().is_empty());
     Ok(())
 }
 

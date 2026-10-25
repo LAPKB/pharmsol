@@ -5,10 +5,9 @@ use std::error::Error;
 use std::io;
 
 use diffsol::Vector;
-use ndarray::Array2;
 use pharmsol::dsl::{self, CompiledRuntimeModel, RuntimePredictions};
 use pharmsol::prelude::{
-    one_compartment_with_absorption, Equation, Prediction, SubjectPredictions,
+    one_compartment_with_absorption, Equation, ParticlePredictions, SubjectPredictions,
 };
 use pharmsol::{
     equation, fa, fetch_cov, fetch_params, lag, Parameters, Subject, SubjectBuilderExt, SDE,
@@ -377,7 +376,7 @@ impl CorpusCase {
 
 enum ExpectedPredictions {
     Subject(SubjectPredictions),
-    Particles(Array2<Prediction>),
+    Particles(ParticlePredictions),
 }
 
 fn adjust_runtime_model(case: CorpusCase, model: CompiledRuntimeModel) -> CompiledRuntimeModel {
@@ -503,8 +502,8 @@ fn compare_subject_predictions(
 fn compare_particle_predictions(
     case: CorpusCase,
     backend_label: &str,
-    actual: &Array2<Prediction>,
-    expected: &Array2<Prediction>,
+    actual: &ParticlePredictions,
+    expected: &ParticlePredictions,
 ) -> Result<(), Box<dyn Error>> {
     if actual.dim() != expected.dim() {
         return Err(io::Error::other(format!(
@@ -517,20 +516,20 @@ fn compare_particle_predictions(
         .into());
     }
 
+    let (actual, expected) = (actual.values(), expected.values());
     for row in 0..actual.nrows() {
         for col in 0..actual.ncols() {
-            let actual_prediction = &actual[(row, col)];
-            let expected_prediction = &expected[(row, col)];
-            let abs_diff =
-                (actual_prediction.prediction() - expected_prediction.prediction()).abs();
+            let actual_prediction = actual[(row, col)];
+            let expected_prediction = expected[(row, col)];
+            let abs_diff = (actual_prediction - expected_prediction).abs();
             if abs_diff > case.tolerance() {
                 return Err(io::Error::other(format!(
                     "{} [{}]: particle ({row}, {col}) differed by {:.6} (expected {:.6}, actual {:.6}, tolerance {:.6})",
                     case.label(),
                     backend_label,
                     abs_diff,
-                    expected_prediction.prediction(),
-                    actual_prediction.prediction(),
+                    expected_prediction,
+                    actual_prediction,
                     case.tolerance()
                 ))
                 .into());
@@ -965,7 +964,7 @@ fn reference_analytical_full_predictions() -> Result<SubjectPredictions, Box<dyn
     Ok(model.predict(&subject, &parameters)?)
 }
 
-fn reference_sde_predictions() -> Result<Array2<Prediction>, Box<dyn Error>> {
+fn reference_sde_predictions() -> Result<ParticlePredictions, Box<dyn Error>> {
     let model = SDE::new(
         |x, p, _t, dx, _rateiv, _cov| {
             fetch_params!(p, ka, ke0, kcp, kpc, _vol, _ske);

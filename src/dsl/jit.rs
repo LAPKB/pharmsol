@@ -1432,7 +1432,7 @@ mod tests {
     use super::*;
     use crate::equation::ode::{ExplicitRkTableau, OdeSolver};
     use crate::simulator::equation::analytical::one_compartment_with_absorption;
-    use crate::simulator::equation::{Equation, Predictions as PredictionTrait};
+    use crate::simulator::equation::Equation;
     use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
     use crate::{equation, Parameters, Subject, SubjectBuilderExt, ODE, SDE};
     use approx::assert_relative_eq;
@@ -2608,16 +2608,12 @@ model analytical_mixed {
             .predict(&reference_subject, &support)
             .expect("reference sde predictions");
 
-        for (jit_pred, reference_pred) in jit_predictions
-            .get_predictions()
-            .iter()
-            .zip(reference_predictions.get_predictions())
+        for (jit_mean, reference_mean) in jit_predictions
+            .mean()
+            .into_iter()
+            .zip(reference_predictions.mean())
         {
-            assert_relative_eq!(
-                jit_pred.prediction(),
-                reference_pred.prediction(),
-                max_relative = 1e-4
-            );
+            assert_relative_eq!(jit_mean, reference_mean, max_relative = 1e-4);
         }
     }
 }

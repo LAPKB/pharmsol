@@ -67,17 +67,7 @@ fn predictions(
             .iter()
             .map(|prediction| prediction.prediction())
             .collect(),
-        RuntimePredictions::Particles(particles) => particles
-            .columns()
-            .into_iter()
-            .map(|column| {
-                column
-                    .iter()
-                    .map(|prediction| prediction.prediction())
-                    .sum::<f64>()
-                    / column.len() as f64
-            })
-            .collect(),
+        RuntimePredictions::Particles(particles) => particles.mean(),
     }
 }
 

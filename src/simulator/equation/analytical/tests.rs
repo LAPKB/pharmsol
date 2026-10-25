@@ -1,5 +1,6 @@
 use super::*;
 use crate::simulator::equation::{AttachMetadataError, ModelMetadataError};
+use crate::AssayErrorModels;
 use crate::SubjectBuilderExt;
 use approx::assert_relative_eq;
 use diffsol::Vector;

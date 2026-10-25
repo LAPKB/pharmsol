@@ -21,7 +21,6 @@ use diffsol::{
 
 use crate::{
     data::Covariates,
-    error_model::AssayErrorModels,
     prelude::simulator::SubjectPredictions,
     simulator::{M as Matrix, V},
     Occasion, PharmsolError, Subject,
@@ -30,8 +29,12 @@ use crate::{
 use super::model::{
     fill_active_rates, prepare_occasion, with_subject_context, InfusionDose, Model, Step,
 };
-use super::{salted_parameters_hash, Cache, Equation, ValidatedModelMetadata};
+use super::{
+    salted_parameters_hash, simulate_deterministic, Cache, Equation, Simulation,
+    ValidatedModelMetadata,
+};
 use crate::simulator::cache::{PredictionCache, PredictionKey, DEFAULT_CACHE_SIZE};
+use crate::simulator::likelihood::ObservationModel;
 use closure::PMProblem;
 
 const RTOL: f64 = 1e-4;
@@ -545,15 +548,24 @@ impl<M: OdeModel> Equation for ODE<M> {
             .map(Arc::unwrap_or_clone)
     }
 
-    fn log_likelihood(
+    fn log_likelihood<O: ObservationModel + ?Sized>(
         &self,
         subject: &Subject,
         parameters: &[f64],
-        error_models: &AssayErrorModels,
+        observation_model: &O,
     ) -> Result<f64, PharmsolError> {
-        self.validate_error_models(error_models)?;
+        self.validate_observation_model(observation_model)?;
         self.predictions(subject, parameters)?
-            .log_likelihood(error_models)
+            .log_likelihood(observation_model)
+    }
+
+    fn simulate(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+        observation_model: Option<&dyn ObservationModel>,
+    ) -> Result<Simulation<SubjectPredictions>, PharmsolError> {
+        simulate_deterministic(self, subject, parameters, observation_model)
     }
 }
 

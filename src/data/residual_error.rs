@@ -37,8 +37,13 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::hash::{Hash, Hasher};
 
+use crate::data::error_model::ErrorModelError;
 use crate::data::event::OutputLabel;
+use crate::simulator::likelihood::observation::finite;
+use crate::simulator::likelihood::ObservationModel;
+use crate::{Censor, ErrorPoly, PharmsolError};
 
 /// Residual error model for parametric estimation algorithms.
 ///
@@ -457,6 +462,54 @@ impl ResidualErrorModels {
         for model in self.models.values_mut() {
             *model = model.with_updated_sigma(new_sigma);
         }
+    }
+}
+
+/// Tag mixed into [`ResidualErrorModels`] cache keys, so they never collide
+/// with another observation model's.
+const RESIDUAL_CACHE_TAG: u64 = 0x7265_7369_6400_0001;
+
+impl ObservationModel for ResidualErrorModels {
+    /// Normal density with sigma from the prediction.
+    ///
+    /// Censoring and the observation's error polynomial are ignored: a
+    /// censored observation is scored as if its limit had been measured.
+    #[inline]
+    fn log_density(
+        &self,
+        outeq: &OutputLabel,
+        observation: f64,
+        prediction: f64,
+        _censoring: Censor,
+        _errorpoly: Option<ErrorPoly>,
+    ) -> Result<f64, PharmsolError> {
+        let model = self
+            .models
+            .get(outeq.as_str())
+            .ok_or_else(|| ErrorModelError::UnknownOutputLabel(outeq.to_string()))?;
+        finite(model.log_likelihood(observation, prediction))
+    }
+
+    fn labels(&self) -> Box<dyn Iterator<Item = &OutputLabel> + '_> {
+        Box::new(self.models.keys())
+    }
+
+    fn cache_key(&self) -> u64 {
+        let mut hasher = ahash::AHasher::default();
+        RESIDUAL_CACHE_TAG.hash(&mut hasher);
+        for (label, model) in &self.models {
+            label.hash(&mut hasher);
+            let (variant, a, b) = match *model {
+                ResidualErrorModel::Constant { a } => (0u8, a, 0.0),
+                ResidualErrorModel::Proportional { b } => (1, 0.0, b),
+                ResidualErrorModel::Combined { a, b } => (2, a, b),
+                ResidualErrorModel::Exponential { sigma } => (3, sigma, 0.0),
+            };
+            variant.hash(&mut hasher);
+            a.to_bits().hash(&mut hasher);
+            b.to_bits().hash(&mut hasher);
+        }
+        hasher.finish()
     }
 }
 
