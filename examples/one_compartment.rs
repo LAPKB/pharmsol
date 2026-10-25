@@ -65,14 +65,13 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
 
     // Compute likelihoods and predictions for both models
     let analytical_likelihoods =
-        analytical.estimate_log_likelihood(&subject, &analytical_parameters, &ems)?;
+        analytical.log_likelihood(&subject, &analytical_parameters, &ems)?;
 
-    let analytical_predictions =
-        analytical.estimate_predictions(&subject, &analytical_parameters)?;
+    let analytical_predictions = analytical.predict(&subject, &analytical_parameters)?;
 
-    let ode_likelihoods = ode.estimate_log_likelihood(&subject, &ode_parameters, &ems)?;
+    let ode_likelihoods = ode.log_likelihood(&subject, &ode_parameters, &ems)?;
 
-    let ode_predictions = ode.estimate_predictions(&subject, &ode_parameters)?;
+    let ode_predictions = ode.predict(&subject, &ode_parameters)?;
 
     // Print comparison table
     println!("\n┌───────────┬─────────────────┬─────────────────┬─────────────────────┐");

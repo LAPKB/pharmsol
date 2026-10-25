@@ -51,7 +51,7 @@ fn assert_time_echo_matches_observation_times(
         .build();
 
     let predictions = model
-        .estimate_predictions(&subject, &support_point)?
+        .predict(&subject, &support_point)?
         .into_subject()
         .ok_or("expected subject predictions")?;
 

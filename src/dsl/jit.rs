@@ -1557,7 +1557,7 @@ out(cp) = central / v ~ continuous()
         )
         .expect("valid named parameters");
         let jit_predictions = jit
-            .estimate_predictions(&jit_subject, &support)
+            .predict(&jit_subject, &support)
             .expect("jit predictions");
 
         let reference = ODE::new(
@@ -1580,7 +1580,7 @@ out(cp) = central / v ~ continuous()
         .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
 
         let reference_predictions = reference
-            .estimate_predictions(&reference_subject, &support)
+            .predict(&reference_subject, &support)
             .expect("reference ode predictions");
 
         for (jit_pred, reference_pred) in jit_predictions
@@ -1664,7 +1664,7 @@ out(cp) = central / v ~ continuous()
         )
         .expect("valid named parameters");
         let jit_predictions = jit
-            .estimate_predictions(&jit_subject, &support)
+            .predict(&jit_subject, &support)
             .expect("jit predictions");
 
         let reference = ODE::new(
@@ -1684,7 +1684,7 @@ out(cp) = central / v ~ continuous()
         .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
 
         let reference_predictions = reference
-            .estimate_predictions(&reference_subject, &support)
+            .predict(&reference_subject, &support)
             .expect("reference ode predictions");
 
         for (jit_pred, reference_pred) in jit_predictions
@@ -1774,10 +1774,10 @@ model shared_label_canonical {
         .expect("valid named parameters");
 
         let authoring_predictions = authoring_jit
-            .estimate_predictions(&subject, &support)
+            .predict(&subject, &support)
             .expect("authoring jit predictions");
         let canonical_predictions = canonical_jit
-            .estimate_predictions(&subject, &support)
+            .predict(&subject, &support)
             .expect("canonical jit predictions");
 
         for (authoring_pred, canonical_pred) in authoring_predictions
@@ -1867,7 +1867,7 @@ out(cp) = central / v ~ continuous()
         )
         .expect("valid named parameters");
         let jit_predictions = jit
-            .estimate_predictions(&jit_subject, &support)
+            .predict(&jit_subject, &support)
             .expect("jit predictions");
 
         let reference = ODE::new(
@@ -1889,7 +1889,7 @@ out(cp) = central / v ~ continuous()
         .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
 
         let reference_predictions = reference
-            .estimate_predictions(&reference_subject, &support)
+            .predict(&reference_subject, &support)
             .expect("reference ode predictions");
 
         for (jit_pred, reference_pred) in jit_predictions
@@ -1943,7 +1943,7 @@ out(cp) = central / v ~ continuous()
             .observation(1.0, 0.0, "cp")
             .build();
         let err = jit
-            .estimate_predictions(&wrong_infusion, &support)
+            .predict(&wrong_infusion, &support)
             .expect_err("infusion of bolus-only label must fail");
         assert!(
             matches!(err, crate::PharmsolError::UnsupportedInputRouteKind { .. }),
@@ -1956,7 +1956,7 @@ out(cp) = central / v ~ continuous()
             .observation(1.0, 0.0, "cp")
             .build();
         let err = jit
-            .estimate_predictions(&wrong_bolus, &support)
+            .predict(&wrong_bolus, &support)
             .expect_err("bolus of infusion-only label must fail");
         assert!(
             matches!(err, crate::PharmsolError::UnsupportedInputRouteKind { .. }),
@@ -1969,7 +1969,7 @@ out(cp) = central / v ~ continuous()
             .observation(1.0, 0.0, "cp")
             .build();
         let err = jit
-            .estimate_predictions(&unknown, &support)
+            .predict(&unknown, &support)
             .expect_err("unknown label must fail");
         assert!(
             matches!(err, crate::PharmsolError::UnknownInputLabel { .. }),
@@ -2010,7 +2010,7 @@ out(cp) = central / v ~ continuous()
             .infusion(0.0, 100.0, 1, 2.0)
             .observation(1.0, 0.0, "cp")
             .build();
-        jit.estimate_predictions(&numeric_subject, &support)
+        jit.predict(&numeric_subject, &support)
             .expect("declared numeric label must resolve");
 
         // Undeclared labels never resolve: not by position, and `input_1`
@@ -2021,7 +2021,7 @@ out(cp) = central / v ~ continuous()
                 .observation(1.0, 0.0, "cp")
                 .build();
             let err = jit
-                .estimate_predictions(&missing_subject, &support)
+                .predict(&missing_subject, &support)
                 .expect_err("undeclared label must fail");
             assert!(
                 matches!(err, crate::PharmsolError::UnknownInputLabel { .. }),
@@ -2072,7 +2072,7 @@ out(cp) = central / v ~ continuous()
         .expect("valid named parameters");
 
         let predictions = jit
-            .estimate_predictions(&subject, &support)
+            .predict(&subject, &support)
             .expect("jit dense grid near event should simulate");
         assert_eq!(predictions.predictions().len(), 4);
     }
@@ -2217,7 +2217,7 @@ out(cp) = central / v ~ continuous()
         )
         .expect("valid named parameters");
         let jit_predictions = jit
-            .estimate_predictions(&jit_subject, &support)
+            .predict(&jit_subject, &support)
             .expect("jit predictions");
 
         let reference = ODE::new(
@@ -2262,7 +2262,7 @@ out(cp) = central / v ~ continuous()
         .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
 
         let reference_predictions = reference
-            .estimate_predictions(&reference_subject, &support)
+            .predict(&reference_subject, &support)
             .expect("reference ode predictions");
 
         for (jit_pred, reference_pred) in jit_predictions
@@ -2319,7 +2319,7 @@ out(cp) = central / v ~ continuous()
         let support = Parameters::with_model(&jit, [("ka", 1.0), ("ke", 0.15), ("v", 25.0)])
             .expect("valid named parameters");
         let jit_predictions = jit
-            .estimate_predictions(&jit_subject, &support)
+            .predict(&jit_subject, &support)
             .expect("jit analytical predictions");
 
         let reference = equation::Analytical::new(
@@ -2337,7 +2337,7 @@ out(cp) = central / v ~ continuous()
         .with_nout(1);
 
         let reference_predictions = reference
-            .estimate_predictions(&reference_subject, &support)
+            .predict(&reference_subject, &support)
             .expect("reference analytical predictions");
 
         for (jit_pred, reference_pred) in jit_predictions
@@ -2399,7 +2399,7 @@ model analytical_mixed {
         let jit_support = Parameters::with_model(&jit, [("ka", 1.0), ("v", 25.0), ("ke0", 0.15)])
             .expect("valid named parameters");
         let jit_predictions = jit
-            .estimate_predictions(&jit_subject, &jit_support)
+            .predict(&jit_subject, &jit_support)
             .expect("jit analytical predictions");
 
         let reference = equation::Analytical::new(
@@ -2418,7 +2418,7 @@ model analytical_mixed {
 
         let reference_support = crate::parameters::dense(vec![1.0, 0.15, 25.0]);
         let reference_predictions = reference
-            .estimate_predictions(&reference_subject, &reference_support)
+            .predict(&reference_subject, &reference_support)
             .expect("reference analytical predictions");
 
         for (jit_pred, reference_pred) in jit_predictions
@@ -2504,10 +2504,10 @@ model analytical_mixed {
         let support = [1.1, 0.2, 0.12, 0.08, 15.0, 0.3];
 
         let jit_ll = jit
-            .estimate_log_likelihood(&subject, &support, &error_models)
+            .log_likelihood(&subject, &support, &error_models)
             .expect("jit particle filter");
         let native_ll = native
-            .estimate_log_likelihood(&subject, &support, &error_models)
+            .log_likelihood(&subject, &support, &error_models)
             .expect("native particle filter");
         assert!(jit_ll.is_finite());
         assert_relative_eq!(jit_ll, native_ll, max_relative = 1e-6);
@@ -2568,7 +2568,7 @@ model analytical_mixed {
         )
         .expect("valid named parameters");
         let jit_predictions = jit
-            .estimate_predictions(&jit_subject, &support)
+            .predict(&jit_subject, &support)
             .expect("jit sde predictions");
 
         let reference = SDE::new(
@@ -2605,7 +2605,7 @@ model analytical_mixed {
         .with_nout(1);
 
         let reference_predictions = reference
-            .estimate_predictions(&reference_subject, &support)
+            .predict(&reference_subject, &support)
             .expect("reference sde predictions");
 
         for (jit_pred, reference_pred) in jit_predictions

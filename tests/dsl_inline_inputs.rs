@@ -59,7 +59,7 @@ fn predictions(
     let parameters =
         Parameters::with_model(model, parameters.iter().copied()).expect("valid named parameters");
     match model
-        .estimate_predictions(subject, &parameters)
+        .predict(subject, &parameters)
         .expect("model should simulate")
     {
         RuntimePredictions::Subject(predictions) => predictions

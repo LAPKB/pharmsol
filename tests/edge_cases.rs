@@ -88,9 +88,9 @@ fn zero_duration_infusions_are_rejected_by_every_family() {
         .infusion(0.0, 100.0, 0, 0.0)
         .observation(1.0, 1.0, 0)
         .build();
-    assert_err_contains(ode().estimate_predictions(&subject, &P), "positive");
-    assert_err_contains(analytical(1).estimate_predictions(&subject, &P), "positive");
-    assert_err_contains(sde(4).estimate_predictions(&subject, &P), "positive");
+    assert_err_contains(ode().predict(&subject, &P), "positive");
+    assert_err_contains(analytical(1).predict(&subject, &P), "positive");
+    assert_err_contains(sde(4).predict(&subject, &P), "positive");
 }
 
 #[test]
@@ -112,7 +112,7 @@ fn non_finite_lag_is_rejected_by_analytical_models_too() {
     .with_nstates(1)
     .with_ndrugs(1)
     .with_nout(1);
-    assert_err_contains(analytical.estimate_predictions(&subject, &P), "not finite");
+    assert_err_contains(analytical.predict(&subject, &P), "not finite");
 }
 
 #[test]
@@ -126,9 +126,9 @@ fn out_of_range_labels_are_errors_not_panics() {
         .observation(1.0, 1.0, 3)
         .build();
     for subject in [&bad_input, &bad_output] {
-        assert!(ode().estimate_predictions(subject, &P).is_err());
-        assert!(analytical(1).estimate_predictions(subject, &P).is_err());
-        assert!(sde(4).estimate_predictions(subject, &P).is_err());
+        assert!(ode().predict(subject, &P).is_err());
+        assert!(analytical(1).predict(subject, &P).is_err());
+        assert!(sde(4).predict(subject, &P).is_err());
     }
 }
 
@@ -139,10 +139,7 @@ fn bolus_into_a_missing_state_is_an_error() {
         .bolus(0.0, 100.0, 1)
         .observation(1.0, 1.0, 0)
         .build();
-    assert_err_contains(
-        analytical(2).estimate_predictions(&subject, &P),
-        "no state to land in",
-    );
+    assert_err_contains(analytical(2).predict(&subject, &P), "no state to land in");
 }
 
 #[test]
@@ -160,7 +157,7 @@ fn too_few_parameters_for_declared_metadata_is_an_error() {
         .bolus(0.0, 100.0, "iv")
         .observation(1.0, 1.0, "cp")
         .build();
-    assert_err_contains(ode.estimate_predictions(&subject, &[0.5]), "declares 2");
+    assert_err_contains(ode.predict(&subject, &[0.5]), "declares 2");
 }
 
 #[test]
@@ -181,7 +178,7 @@ fn a_model_without_states_still_produces_outputs() {
         .observation(1.0, 1.0, 0)
         .observation(3.0, 1.0, 0)
         .build();
-    let predictions = constant.estimate_predictions(&subject, &[]).unwrap();
+    let predictions = constant.predict(&subject, &[]).unwrap();
     let values: Vec<f64> = predictions
         .predictions()
         .iter()
@@ -197,9 +194,9 @@ fn an_sde_without_particles_is_an_error() {
         .observation(1.0, 1.0, 0)
         .build();
     let model = sde(0);
-    assert_err_contains(model.estimate_predictions(&subject, &P), "particle");
+    assert_err_contains(model.predict(&subject, &P), "particle");
     assert_err_contains(
-        model.estimate_log_likelihood(&subject, &P, &error_models()),
+        model.log_likelihood(&subject, &P, &error_models()),
         "particle",
     );
 }
@@ -211,7 +208,7 @@ fn sde_steps_never_cross_a_tiny_interval() {
         .observation(1.0, 1.0, 0)
         .observation(1.0 + 1e-12, 1.0, 0)
         .build();
-    let predictions = sde(4).estimate_predictions(&subject, &P).unwrap();
+    let predictions = sde(4).predict(&subject, &P).unwrap();
     let means = predictions.get_predictions();
     assert!((means[0].prediction() - means[1].prediction()).abs() < 1e-9);
 }
@@ -234,7 +231,7 @@ fn sde_likelihood_matrix_with_duplicate_subjects_and_points_completes() {
     let direct = model
         .clone()
         .disable_cache()
-        .estimate_log_likelihood(&subject, &[0.5, 10.0, 0.3], &error_models())
+        .log_likelihood(&subject, &[0.5, 10.0, 0.3], &error_models())
         .unwrap();
     for row in 0..6 {
         assert_eq!(matrix[[row, 0]], direct);

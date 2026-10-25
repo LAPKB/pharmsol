@@ -111,7 +111,7 @@ impl<M: AnalyticalModel> Analytical<M> {
         subject: &Subject,
         parameters: &[f64],
     ) -> Result<Arc<SubjectPredictions>, PharmsolError> {
-        let simulate = || self.simulate(subject, parameters).map(Arc::new);
+        let simulate = || self.solve(subject, parameters).map(Arc::new);
         match &self.cache {
             Some(cache) => {
                 cache.get_or_try_insert(self.prediction_key(subject, parameters), simulate)
@@ -124,7 +124,7 @@ impl<M: AnalyticalModel> Analytical<M> {
         (subject.hash(), salted_parameters_hash(parameters, 0))
     }
 
-    fn simulate(
+    fn solve(
         &self,
         subject: &Subject,
         parameters: &[f64],
@@ -322,7 +322,7 @@ impl<M: AnalyticalModel> Equation for Analytical<M> {
         self.model.noutputs()
     }
 
-    fn estimate_predictions(
+    fn predict(
         &self,
         subject: &Subject,
         parameters: &[f64],
@@ -331,7 +331,7 @@ impl<M: AnalyticalModel> Equation for Analytical<M> {
             .map(Arc::unwrap_or_clone)
     }
 
-    fn estimate_log_likelihood(
+    fn log_likelihood(
         &self,
         subject: &Subject,
         parameters: &[f64],

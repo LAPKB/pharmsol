@@ -72,7 +72,7 @@ fn bench_log_likelihood<E: Equation>(
     b.iter(|| {
         black_box(
             model
-                .estimate_log_likelihood(
+                .log_likelihood(
                     black_box(subject),
                     black_box(theta),
                     black_box(error_models),

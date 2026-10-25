@@ -492,12 +492,12 @@ fn macro_injected_lowering_matches_handwritten_metadata_and_predictions() {
     assert_eq!(macro_ode.state_index("central"), Some(0));
 
     let macro_predictions = macro_ode
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("macro injected model should simulate")
         .flat_predictions()
         .to_vec();
     let handwritten_predictions = handwritten_ode
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("handwritten injected model should simulate")
         .flat_predictions()
         .to_vec();
@@ -522,12 +522,12 @@ fn macro_numeric_labels_lower_to_dense_slots() {
     assert_eq!(macro_ode.state_index("central"), Some(0));
 
     let macro_predictions = macro_ode
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("macro numeric-label model should simulate")
         .flat_predictions()
         .to_vec();
     let handwritten_predictions = handwritten_ode
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("handwritten numeric-label model should simulate")
         .flat_predictions()
         .to_vec();
@@ -563,12 +563,12 @@ fn macro_shared_input_lowering_matches_handwritten_metadata_and_predictions() {
     assert_eq!(macro_ode.state_index("central"), Some(1));
 
     let macro_predictions = macro_ode
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("macro shared-input model should simulate")
         .flat_predictions()
         .to_vec();
     let handwritten_predictions = handwritten_ode
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("handwritten shared-input model should simulate")
         .flat_predictions()
         .to_vec();
@@ -594,12 +594,12 @@ fn macro_shared_label_lowering_matches_handwritten_metadata_and_predictions() {
     assert_eq!(macro_ode.state_index("central"), Some(0));
 
     let macro_predictions = macro_ode
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("macro shared-label model should simulate")
         .flat_predictions()
         .to_vec();
     let handwritten_predictions = handwritten_ode
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("handwritten shared-label model should simulate")
         .flat_predictions()
         .to_vec();
@@ -629,12 +629,12 @@ fn macro_mixed_output_labels_lower_to_dense_slots() {
     assert!(macro_metadata.output("1").is_some());
 
     let macro_predictions = macro_ode
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("macro mixed-output model should simulate")
         .flat_predictions()
         .to_vec();
     let handwritten_predictions = handwritten_ode
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("handwritten mixed-output model should simulate")
         .flat_predictions()
         .to_vec();
@@ -669,12 +669,12 @@ fn macro_numeric_route_properties_lower_to_dense_slots() {
     assert_eq!(macro_ode.state_index("central"), Some(1));
 
     let macro_predictions = macro_ode
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("macro numeric route-property model should simulate")
         .flat_predictions()
         .to_vec();
     let handwritten_predictions = handwritten_ode
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("handwritten numeric route-property model should simulate")
         .flat_predictions()
         .to_vec();
@@ -696,12 +696,12 @@ fn macro_named_labels_resolve_from_pmetrics_ingestion() {
         .expect("valid named parameters");
 
     let pmetrics_predictions = macro_ode
-        .estimate_predictions(subject, &support_point)
+        .predict(subject, &support_point)
         .expect("macro named-label model should simulate")
         .flat_predictions()
         .to_vec();
     let manual_predictions = macro_ode
-        .estimate_predictions(&subject_for_route("iv", "cp"), &support_point)
+        .predict(&subject_for_route("iv", "cp"), &support_point)
         .expect("macro internal-index model should simulate")
         .flat_predictions()
         .to_vec();
@@ -723,12 +723,12 @@ fn macro_numeric_labels_resolve_from_pmetrics_ingestion() {
         .expect("valid named parameters");
 
     let pmetrics_predictions = macro_ode
-        .estimate_predictions(subject, &support_point)
+        .predict(subject, &support_point)
         .expect("macro numeric-label model should simulate")
         .flat_predictions()
         .to_vec();
     let manual_predictions = macro_ode
-        .estimate_predictions(&subject_for_route("1", "1"), &support_point)
+        .predict(&subject_for_route("1", "1"), &support_point)
         .expect("macro internal-index numeric-label model should simulate")
         .flat_predictions()
         .to_vec();
@@ -756,12 +756,12 @@ fn macro_covariate_lowering_matches_handwritten_metadata_and_predictions() {
     assert_eq!(macro_ode.state_index("central"), Some(1));
 
     let macro_predictions = macro_ode
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("macro covariate model should simulate")
         .flat_predictions()
         .to_vec();
     let handwritten_predictions = handwritten_ode
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("handwritten covariate model should simulate")
         .flat_predictions()
         .to_vec();

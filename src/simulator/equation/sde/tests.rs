@@ -109,7 +109,7 @@ fn handwritten_sde_metadata_resolves_numeric_labels_by_exact_name() {
         .observation(1.0, 0.0, "1")
         .build();
     let prediction = sde
-        .estimate_predictions(&numeric, &crate::parameters::dense([]))
+        .predict(&numeric, &crate::parameters::dense([]))
         .expect("numeric labels should resolve by exact name")[[0, 0]]
     .prediction();
     assert!(prediction > 0.0);
@@ -126,7 +126,7 @@ fn handwritten_sde_metadata_resolves_numeric_labels_by_exact_name() {
             .build(),
     ] {
         assert!(sde
-            .estimate_predictions(&prefixed, &crate::parameters::dense([]))
+            .predict(&prefixed, &crate::parameters::dense([]))
             .is_err());
     }
 }
@@ -238,10 +238,10 @@ fn sde_metadata_input_policy_is_descriptive_only_for_bolus_routes() {
         .build();
 
     let explicit_predictions = explicit
-        .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
+        .predict(&subject, &crate::parameters::dense([0.0]))
         .unwrap();
     let injected_predictions = injected
-        .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
+        .predict(&subject, &crate::parameters::dense([0.0]))
         .unwrap();
 
     assert_eq!(explicit_predictions[[0, 0]].prediction(), 0.0);
@@ -287,10 +287,10 @@ fn sde_metadata_input_policy_does_not_change_explicit_rateiv_behavior() {
         .build();
 
     let explicit_predictions = explicit
-        .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
+        .predict(&subject, &crate::parameters::dense([0.0]))
         .unwrap();
     let injected_predictions = injected
-        .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
+        .predict(&subject, &crate::parameters::dense([0.0]))
         .unwrap();
 
     let explicit_prediction = explicit_predictions[[0, 0]].prediction();
@@ -328,7 +328,7 @@ fn clearing_sde_metadata_preserves_raw_bolus_behavior() {
         .build();
 
     let predictions = sde
-        .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
+        .predict(&subject, &crate::parameters::dense([0.0]))
         .unwrap();
 
     assert!(sde.metadata().is_none());
@@ -366,16 +366,16 @@ fn particle_filter_is_deterministic() {
     let parameters = [1.0, 50.0];
 
     let first = sde
-        .estimate_log_likelihood(&subject, &parameters, &error_models)
+        .log_likelihood(&subject, &parameters, &error_models)
         .unwrap();
     let second = sde
-        .estimate_log_likelihood(&subject, &parameters, &error_models)
+        .log_likelihood(&subject, &parameters, &error_models)
         .unwrap();
     assert!(first.is_finite());
     assert_eq!(first, second);
 
-    let predictions = sde.estimate_predictions(&subject, &parameters).unwrap();
-    let again = sde.estimate_predictions(&subject, &parameters).unwrap();
+    let predictions = sde.predict(&subject, &parameters).unwrap();
+    let again = sde.predict(&subject, &parameters).unwrap();
     assert_eq!(predictions.dim(), (128, 3));
     assert_eq!(values(&predictions), values(&again));
 }
@@ -390,7 +390,7 @@ fn likelihood_matrix_uses_the_particle_filter() {
     let error_models = filter_error_models();
 
     let direct = sde
-        .estimate_log_likelihood(&subject, &[1.0, 50.0], &error_models)
+        .log_likelihood(&subject, &[1.0, 50.0], &error_models)
         .unwrap();
     let matrix = log_likelihood_matrix(
         &sde.clone().disable_cache(),
@@ -407,12 +407,10 @@ fn likelihood_matrix_uses_the_particle_filter() {
 fn seed_selects_independent_particle_paths() {
     let subject = filter_subject();
     let parameters = [1.0, 50.0];
-    let default_seed = simple_sde()
-        .estimate_predictions(&subject, &parameters)
-        .unwrap();
+    let default_seed = simple_sde().predict(&subject, &parameters).unwrap();
     let other_seed = simple_sde()
         .with_seed(7)
-        .estimate_predictions(&subject, &parameters)
+        .predict(&subject, &parameters)
         .unwrap();
     assert_ne!(values(&default_seed), values(&other_seed));
 }
@@ -430,7 +428,7 @@ fn impossible_observation_has_zero_likelihood() {
         .unwrap();
 
     let log_likelihood = sde
-        .estimate_log_likelihood(&subject, &[1.0, 50.0], &error_models)
+        .log_likelihood(&subject, &[1.0, 50.0], &error_models)
         .unwrap();
     assert_eq!(log_likelihood, f64::NEG_INFINITY);
 }
@@ -443,17 +441,17 @@ fn simulate_subject_returns_one_filtered_run() {
     let parameters = [1.0, 50.0];
 
     let (predictions, likelihood) = sde
-        .simulate_subject(&subject, &parameters, Some(&error_models))
+        .simulate(&subject, &parameters, Some(&error_models))
         .unwrap();
     let log_likelihood = sde
-        .estimate_log_likelihood(&subject, &parameters, &error_models)
+        .log_likelihood(&subject, &parameters, &error_models)
         .unwrap();
     assert_eq!(predictions.dim(), (128, 3));
     assert_eq!(likelihood.unwrap().ln(), log_likelihood);
 
     // The particles are the filtered ones: identical to an unfiltered run up
     // to the first resampling, different after it.
-    let unfiltered = sde.estimate_predictions(&subject, &parameters).unwrap();
+    let unfiltered = sde.predict(&subject, &parameters).unwrap();
     let column = |m: &Array2<Prediction>, j: usize| -> Vec<f64> {
         m.column(j).iter().map(Prediction::prediction).collect()
     };
@@ -478,13 +476,13 @@ fn particles_the_data_rules_out_get_zero_weight() {
         .unwrap();
 
     let log_likelihood = sde
-        .estimate_log_likelihood(&subject, &[1.0, 50.0], &error_models)
+        .log_likelihood(&subject, &[1.0, 50.0], &error_models)
         .unwrap();
     assert_eq!(log_likelihood, f64::NEG_INFINITY);
 
     // Predictions still cover every observation.
     let (predictions, likelihood) = sde
-        .simulate_subject(&subject, &[1.0, 50.0], Some(&error_models))
+        .simulate(&subject, &[1.0, 50.0], Some(&error_models))
         .unwrap();
     assert_eq!(predictions.dim(), (128, 2));
     assert_eq!(likelihood, Some(0.0));

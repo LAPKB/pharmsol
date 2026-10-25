@@ -26,7 +26,7 @@ fn prediction(
     model: &CompiledRuntimeModel,
     parameters: &Parameters,
 ) -> Result<f64, Box<dyn std::error::Error>> {
-    let predictions = model.estimate_predictions(&subject(), parameters)?;
+    let predictions = model.predict(&subject(), parameters)?;
     let predictions = predictions
         .into_subject()
         .ok_or_else(|| std::io::Error::other("ODE runtime returned particle predictions"))?;

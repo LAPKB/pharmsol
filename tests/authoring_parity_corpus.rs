@@ -1390,7 +1390,7 @@ fn ode_runtime_jit_applies_explicit_infusion_scale_once() {
         .missing_observation(1.0, "cp")
         .build();
     let predictions = match model
-        .estimate_predictions(&subject, &parameters)
+        .predict(&subject, &parameters)
         .expect("scaled infusion should simulate")
     {
         RuntimePredictions::Subject(predictions) => predictions,
@@ -1458,19 +1458,19 @@ fn ode_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_input_shape
     );
 
     let runtime_predictions = match runtime_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("runtime ODE model should simulate")
     {
         RuntimePredictions::Subject(predictions) => predictions.flat_predictions().to_vec(),
         RuntimePredictions::Particles(_) => panic!("ODE runtime should return subject predictions"),
     };
     let macro_predictions = macro_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("macro ODE model should simulate")
         .flat_predictions()
         .to_vec();
     let handwritten_predictions = handwritten_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("handwritten ODE model should simulate")
         .flat_predictions()
         .to_vec();
@@ -1539,7 +1539,7 @@ fn analytical_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_inpu
     );
 
     let runtime_predictions = match runtime_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("runtime analytical model should simulate")
     {
         RuntimePredictions::Subject(predictions) => predictions.flat_predictions().to_vec(),
@@ -1548,12 +1548,12 @@ fn analytical_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_inpu
         }
     };
     let macro_predictions = macro_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("macro analytical model should simulate")
         .flat_predictions()
         .to_vec();
     let handwritten_predictions = handwritten_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("handwritten analytical model should simulate")
         .flat_predictions()
         .to_vec();
@@ -1621,7 +1621,7 @@ fn sde_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_input_shape
     );
 
     let runtime_predictions = match runtime_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("runtime SDE model should simulate")
     {
         RuntimePredictions::Particles(predictions) => particle_prediction_means(&predictions),
@@ -1629,12 +1629,12 @@ fn sde_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_input_shape
     };
     let macro_predictions = particle_prediction_means(
         &macro_model
-            .estimate_predictions(&subject, &support_point)
+            .predict(&subject, &support_point)
             .expect("macro SDE model should simulate"),
     );
     let handwritten_predictions = particle_prediction_means(
         &handwritten_model
-            .estimate_predictions(&subject, &support_point)
+            .predict(&subject, &support_point)
             .expect("handwritten SDE model should simulate"),
     );
 
@@ -1688,14 +1688,14 @@ fn route_input_policy_runtime_mismatches_are_detected_explicitly() {
     );
 
     let runtime_predictions = match runtime_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("runtime ODE model should simulate")
     {
         RuntimePredictions::Subject(predictions) => predictions.flat_predictions().to_vec(),
         RuntimePredictions::Particles(_) => panic!("ODE runtime should return subject predictions"),
     };
     let mismatched_predictions = mismatched_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("mismatched handwritten ODE should simulate")
         .flat_predictions()
         .to_vec();
@@ -1725,7 +1725,7 @@ fn ode_runtime_jit_preserves_mixed_output_labels() {
     assert_eq!(compiled_output_slot_index(&runtime_model, "1"), Some(2));
 
     let predictions = match runtime_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("runtime mixed-output model should simulate")
     {
         RuntimePredictions::Subject(predictions) => predictions.flat_predictions().to_vec(),
@@ -1753,7 +1753,7 @@ fn ode_runtime_jit_rejects_undeclared_numeric_output_labels_even_when_dense_inde
             .expect("valid named parameters");
 
     let error = runtime_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect_err("undeclared numeric output label should fail");
 
     assert!(matches!(
@@ -1778,7 +1778,7 @@ fn ode_runtime_jit_rejects_undeclared_numeric_input_labels_even_when_dense_index
             .expect("valid named parameters");
 
     let error = runtime_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect_err("undeclared numeric input label should fail");
 
     assert!(matches!(

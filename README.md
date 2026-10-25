@@ -60,7 +60,7 @@ let parameters = Parameters::with_model(
 .unwrap();
 
 let predictions = analytical
-    .estimate_predictions(&subject, &parameters)
+    .predict(&subject, &parameters)
     .unwrap();
 ```
 

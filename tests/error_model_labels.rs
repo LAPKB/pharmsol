@@ -70,12 +70,12 @@ fn label_keyed_error_models_are_optimized_by_npag_style_loop() -> Result<(), Pha
         "every label-keyed model must be visible to the optimizer"
     );
 
-    let before = ode.estimate_log_likelihood(subject, &parameters, &error_models)?;
+    let before = ode.log_likelihood(subject, &parameters, &error_models)?;
     for label in &optimizable {
         let updated = error_models.factor(label)? * 2.0;
         error_models.set_factor(label, updated)?;
     }
-    let after = ode.estimate_log_likelihood(subject, &parameters, &error_models)?;
+    let after = ode.log_likelihood(subject, &parameters, &error_models)?;
 
     assert_eq!(error_models.factor("cp")?, 1.0);
     assert_eq!(error_models.factor("effect")?, 2.0);
@@ -106,8 +106,8 @@ fn error_models_bind_by_label_not_insertion_order() -> Result<(), PharmsolError>
 
     assert_eq!(reversed, declared);
     assert_eq!(
-        ode.estimate_log_likelihood(subject, &parameters, &reversed)?,
-        ode.estimate_log_likelihood(subject, &parameters, &declared)?,
+        ode.log_likelihood(subject, &parameters, &reversed)?,
+        ode.log_likelihood(subject, &parameters, &declared)?,
     );
     Ok(())
 }
@@ -130,9 +130,9 @@ fn bound_and_label_likelihood_paths_agree() -> Result<(), PharmsolError> {
 
     // The simulator scores against error models bound to output slots; a
     // caller scores the same predictions by label.
-    let bound = ode.estimate_log_likelihood(subject, &parameters, &error_models)?;
+    let bound = ode.log_likelihood(subject, &parameters, &error_models)?;
     let by_label = ode
-        .estimate_predictions(subject, &parameters)?
+        .predict(subject, &parameters)?
         .log_likelihood(&error_models)?;
     assert_eq!(bound, by_label);
     Ok(())
@@ -143,7 +143,7 @@ fn predictions_keep_their_output_label() -> Result<(), PharmsolError> {
     let ode = two_output_ode();
     let data = observed_data();
     let subject = &data.subjects()[0];
-    let predictions = ode.estimate_predictions(subject, &parameters(&ode))?;
+    let predictions = ode.predict(subject, &parameters(&ode))?;
 
     let mut labels: Vec<&str> = predictions
         .predictions()
@@ -177,7 +177,7 @@ fn an_observed_output_without_an_error_model_is_reported_by_label() -> Result<()
 
     let none_for_effect = |error: &ErrorModelError| matches!(error, ErrorModelError::NoneErrorModel(label) if label == "effect");
 
-    match ode.estimate_log_likelihood(subject, &parameters(&ode), &error_models) {
+    match ode.log_likelihood(subject, &parameters(&ode), &error_models) {
         Err(PharmsolError::ErrorModelError(error)) if none_for_effect(&error) => {}
         other => panic!("expected NoneErrorModel(`effect`), got {other:?}"),
     }
@@ -199,7 +199,7 @@ fn error_model_for_undeclared_output_is_rejected() -> Result<(), PharmsolError> 
         AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.5),
     )?;
 
-    let result = ode.estimate_log_likelihood(subject, &parameters(&ode), &error_models);
+    let result = ode.log_likelihood(subject, &parameters(&ode), &error_models);
     assert!(
         matches!(&result, Err(error) if error.to_string().contains("concentration")),
         "an unknown label must be reported by name, got {result:?}"
@@ -225,7 +225,7 @@ fn residual_error_models_score_by_label() -> Result<(), PharmsolError> {
     )?;
 
     // The same score, computed by hand from labeled predictions.
-    let predictions = ode.estimate_predictions(data.subjects()[0], &parameters)?;
+    let predictions = ode.predict(data.subjects()[0], &parameters)?;
     let expected = residual_error_models.total_log_likelihood(
         predictions.predictions().iter().filter_map(|prediction| {
             prediction

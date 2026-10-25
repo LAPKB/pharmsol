@@ -90,7 +90,7 @@ fn secondary_equations_accumulate_within_single_solve() {
         .build();
 
     let predictions = analytical
-        .estimate_predictions(&subject, &crate::parameters::dense([1.0]))
+        .predict(&subject, &crate::parameters::dense([1.0]))
         .unwrap();
 
     let value = predictions.predictions()[0].prediction();
@@ -124,7 +124,7 @@ fn infusion_inputs_match_state_dimension() {
         .build();
 
     let predictions = analytical
-        .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
+        .predict(&subject, &crate::parameters::dense([0.0]))
         .unwrap();
 
     assert_eq!(predictions.predictions()[0].prediction(), 4.0);
@@ -194,13 +194,11 @@ fn log_likelihood_matrix_reuses_cached_predictions() {
     assert_eq!(first, second);
 
     let parameters = crate::parameters::dense([0.2, 20.0]);
-    analytical
-        .estimate_predictions(data.subjects()[0], &parameters)
-        .unwrap();
+    analytical.predict(data.subjects()[0], &parameters).unwrap();
     assert_eq!(
         KERNEL_CALLS.load(Ordering::SeqCst),
         after_first,
-        "estimate_predictions must reuse the cached prediction"
+        "predict must reuse the cached prediction"
     );
 
     // The cache only saves work: without it the matrix is the same.
@@ -286,7 +284,7 @@ fn handwritten_analytical_metadata_resolves_numeric_labels_by_exact_name() {
         .observation(1.0, 0.0, "1")
         .build();
     let prediction = analytical
-        .estimate_predictions(&numeric, &crate::parameters::dense([]))
+        .predict(&numeric, &crate::parameters::dense([]))
         .expect("numeric labels should resolve by exact name")
         .predictions()[0]
         .prediction();
@@ -304,7 +302,7 @@ fn handwritten_analytical_metadata_resolves_numeric_labels_by_exact_name() {
             .build(),
     ] {
         assert!(analytical
-            .estimate_predictions(&prefixed, &crate::parameters::dense([]))
+            .predict(&prefixed, &crate::parameters::dense([]))
             .is_err());
     }
 }

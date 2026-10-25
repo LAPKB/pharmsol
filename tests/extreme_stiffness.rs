@@ -56,7 +56,7 @@ fn predictions_for(
     let parameters = Parameters::with_model(model, parameters.iter().copied())
         .unwrap_or_else(|error| panic!("{label}: parameters should validate: {error}"));
     let predictions = model
-        .estimate_predictions(subject, parameters.as_slice())
+        .predict(subject, parameters.as_slice())
         .unwrap_or_else(|error| panic!("{label}: simulation failed: {error}"));
     predictions
         .predictions()
@@ -529,7 +529,7 @@ fn impossibly_stiff_problem_returns_descriptive_error() {
         Parameters::with_model(&model, [("ke", ke)]).expect("parameters should validate");
 
     let error = model
-        .estimate_predictions(&subject, parameters.as_slice())
+        .predict(&subject, parameters.as_slice())
         .expect_err("a problem beyond the minimum step size should fail");
     let message = error.to_string();
     let actionable_failure = (message.contains("step size collapsed")
@@ -600,7 +600,7 @@ fn impossibly_stiff_explicit_problem_returns_descriptive_error() {
         Parameters::with_model(&model, [("ke", ke)]).expect("parameters should validate");
 
     let error = model
-        .estimate_predictions(&subject, parameters.as_slice())
+        .predict(&subject, parameters.as_slice())
         .expect_err("an explicit solver should reject this impossible stiffness");
     let message = error.to_string();
     assert!(
@@ -784,8 +784,7 @@ fn close_distinct_stops_do_not_silently_skip_autonomous_dynamics() {
                 .missing_observation(start, "cp")
                 .missing_observation(stop, "cp")
                 .build();
-            let result =
-                close_gap_exponential_model(solver.clone()).estimate_predictions(&subject, &[rate]);
+            let result = close_gap_exponential_model(solver.clone()).predict(&subject, &[rate]);
             if let Some(failure) = close_gap_failure(
                 &format!("{solver_name} {case_name}"),
                 result,
@@ -818,7 +817,7 @@ fn large_initial_time_close_segment_preserves_absolute_model_time() {
             .build();
 
         for (solver_name, solver) in all_solvers() {
-            let result = absolute_time_rhs_model(solver).estimate_predictions(&subject, &[rate]);
+            let result = absolute_time_rhs_model(solver).predict(&subject, &[rate]);
             if let Some(failure) = close_gap_failure(
                 &format!("{solver_name} {case_name} large-initial-time absolute-time RHS"),
                 result,
@@ -851,7 +850,7 @@ fn rebase_after_large_event_preserves_absolute_time_rhs() {
 
     for (solver_name, solver) in all_solvers() {
         let predictions = rebase_absolute_time_rhs_model(solver)
-            .estimate_predictions(&subject, &[])
+            .predict(&subject, &[])
             .unwrap_or_else(|error| panic!("{solver_name}: rebase simulation failed: {error}"));
         assert_eq!(
             predictions.predictions().len(),
@@ -930,7 +929,7 @@ fn invalid_ode_schedules_return_actionable_errors() {
 
     for (label, subject) in cases {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            infusion_model(OdeSolver::Bdf).estimate_predictions(&subject, &[0.5])
+            infusion_model(OdeSolver::Bdf).predict(&subject, &[0.5])
         }))
         .unwrap_or_else(|_| panic!("{label}: invalid schedule must not panic"));
         let error = result.expect_err(&format!("{label}: invalid schedule must fail"));
@@ -954,7 +953,7 @@ fn finite_cancellation_schedule_preserves_absolute_callback_times() {
 
     for (solver_name, solver) in all_solvers() {
         let predictions = absolute_time_linear_rhs_model(solver)
-            .estimate_predictions(&subject, &[rate])
+            .predict(&subject, &[rate])
             .unwrap_or_else(|error| panic!("{solver_name}: finite cancellation failed: {error}"));
         assert_eq!(
             predictions.predictions().len(),
@@ -989,7 +988,7 @@ fn close_distinct_stop_after_bolus_does_not_skip_decay() {
             .missing_observation(start, "cp")
             .missing_observation(stop, "cp")
             .build();
-        let result = close_gap_bolus_model(solver).estimate_predictions(&subject, &[rate]);
+        let result = close_gap_bolus_model(solver).predict(&subject, &[rate]);
         if let Some(failure) = close_gap_failure(
             &format!("{solver_name} close-gap bolus"),
             result,
@@ -1050,7 +1049,7 @@ fn locf_rhs_change_matches_piecewise_analytical_integral() {
     let expected = 15.0;
     for (solver_name, solver) in all_solvers() {
         let predictions = locf_integral_model(solver)
-            .estimate_predictions(&locf_subject(), &[])
+            .predict(&locf_subject(), &[])
             .unwrap_or_else(|error| panic!("{solver_name} LOCF simulation failed: {error}"));
         let actual = predictions
             .predictions()

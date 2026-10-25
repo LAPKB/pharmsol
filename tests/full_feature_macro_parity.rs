@@ -405,8 +405,8 @@ fn ode_full_feature_macro_matches_handwritten() -> Result<(), pharmsol::Pharmsol
         ],
     )?;
 
-    let macro_predictions = macro_ode.estimate_predictions(&subject, &params)?;
-    let handwritten_predictions = handwritten_ode.estimate_predictions(&subject, &params)?;
+    let macro_predictions = macro_ode.predict(&subject, &params)?;
+    let handwritten_predictions = handwritten_ode.predict(&subject, &params)?;
 
     let diff = max_abs_diff(
         &macro_predictions.flat_predictions(),
@@ -464,8 +464,8 @@ fn analytical_full_feature_macro_matches_handwritten() -> Result<(), pharmsol::P
         ],
     )?;
 
-    let macro_predictions = macro_analytical.estimate_predictions(&subject, &params)?;
-    let handwritten_predictions = handwritten_analytical.estimate_predictions(&subject, &params)?;
+    let macro_predictions = macro_analytical.predict(&subject, &params)?;
+    let handwritten_predictions = handwritten_analytical.predict(&subject, &params)?;
 
     let diff = max_abs_diff(
         &macro_predictions.flat_predictions(),

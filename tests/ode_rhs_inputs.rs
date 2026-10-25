@@ -23,7 +23,7 @@ fn macro_rhs_inputs_use_existing_simulator_vectors() {
         .missing_observation(0.25, "cp")
         .missing_observation(1.5, "cp")
         .build();
-    let predictions = model.estimate_predictions(&subject, &[1.5, 2.0]).unwrap();
+    let predictions = model.predict(&subject, &[1.5, 2.0]).unwrap();
     assert_relative_eq!(
         predictions.predictions()[0].prediction(),
         50.0,
@@ -43,9 +43,7 @@ fn macro_rhs_inputs_use_existing_simulator_vectors() {
             compile_module_source_to_runtime(source, Some("rhs_inputs"), |_, _| {}).unwrap();
         let parameters =
             pharmsol::Parameters::with_model(&compiled, [("f", 1.5), ("iv_scale", 2.0)]).unwrap();
-        let RuntimePredictions::Subject(actual) = compiled
-            .estimate_predictions(&subject, &parameters)
-            .unwrap()
+        let RuntimePredictions::Subject(actual) = compiled.predict(&subject, &parameters).unwrap()
         else {
             panic!("expected ODE predictions");
         };

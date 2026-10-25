@@ -30,7 +30,7 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
 
     let parameters = Parameters::with_model(&ode, [("ke", 1.022), ("v", 194.0)])
         .expect("valid named parameters");
-    let predictions = ode.estimate_predictions(&subject, &parameters)?;
+    let predictions = ode.predict(&subject, &parameters)?;
     println!(
         "state central => {}",
         ode.state_index("central").expect("central state exists")

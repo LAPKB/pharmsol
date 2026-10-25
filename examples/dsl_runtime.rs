@@ -61,7 +61,7 @@ out(cp) = central / v
 
     // 4. Estimate predictions for one support point.
     let predictions = model
-        .estimate_predictions(&subject, &support_point)?
+        .predict(&subject, &support_point)?
         .into_subject()
         .ok_or_else(|| io::Error::other("expected subject predictions"))?;
 

@@ -103,7 +103,7 @@ fn run_infusions(subject: &Subject, solver: OdeSolver) -> Vec<f64> {
     .expect("metadata should validate");
 
     let predictions = ode
-        .simulate_subject(subject, &crate::parameters::dense([]), None)
+        .simulate(subject, &crate::parameters::dense([]), None)
         .expect("infusion simulation should succeed")
         .0;
 
@@ -213,7 +213,7 @@ fn handwritten_ode_defaults_to_explicit_route_vectors() {
     .expect("metadata attachment should validate");
 
     let predictions = ode
-        .simulate_subject(&route_policy_subject(), &crate::parameters::dense([]), None)
+        .simulate(&route_policy_subject(), &crate::parameters::dense([]), None)
         .expect("simulation should succeed")
         .0;
     let metadata = ode.metadata().expect("metadata exists");
@@ -261,7 +261,7 @@ fn handwritten_ode_metadata_input_policy_is_descriptive_only() {
     .expect("metadata attachment should validate");
 
     let predictions = ode
-        .simulate_subject(&route_policy_subject(), &crate::parameters::dense([]), None)
+        .simulate(&route_policy_subject(), &crate::parameters::dense([]), None)
         .expect("simulation should succeed")
         .0;
 
@@ -297,7 +297,7 @@ fn handwritten_ode_metadata_resolves_numeric_labels_by_exact_name() {
         .observation(1.0, 0.0, "1")
         .build();
     let prediction = ode
-        .simulate_subject(&numeric, &crate::parameters::dense([]), None)
+        .simulate(&numeric, &crate::parameters::dense([]), None)
         .expect("numeric labels should resolve by exact name")
         .0
         .predictions()[0]
@@ -316,7 +316,7 @@ fn handwritten_ode_metadata_resolves_numeric_labels_by_exact_name() {
             .build(),
     ] {
         assert!(ode
-            .simulate_subject(&prefixed, &crate::parameters::dense([]), None)
+            .simulate(&prefixed, &crate::parameters::dense([]), None)
             .is_err());
     }
 }
@@ -355,7 +355,7 @@ fn handwritten_ode_runs_init_for_each_occasion() {
         .build();
 
     let predictions = ode
-        .estimate_predictions(&subject, &crate::parameters::dense([]))
+        .predict(&subject, &crate::parameters::dense([]))
         .expect("predictions should succeed");
     assert_eq!(
         predictions
@@ -387,13 +387,13 @@ fn handwritten_ode_estimate_predictions_uses_prediction_cache() {
         .build();
 
     let first = ode
-        .estimate_predictions(&subject, &crate::parameters::dense([]))
+        .predict(&subject, &crate::parameters::dense([]))
         .expect("first prediction run should succeed");
     let first_calls = PREDICTION_CACHE_DIFFEQ_CALLS.load(Ordering::SeqCst);
     assert!(first_calls > 0);
 
     let second = ode
-        .estimate_predictions(&subject, &crate::parameters::dense([]))
+        .predict(&subject, &crate::parameters::dense([]))
         .expect("second prediction run should succeed");
     let second_calls = PREDICTION_CACHE_DIFFEQ_CALLS.load(Ordering::SeqCst);
 
@@ -530,7 +530,7 @@ fn ode_infusions_accepted_stop_before_event_keeps_integrating() {
     .expect("metadata should validate");
 
     let predictions = ode
-        .simulate_subject(&subject, &crate::parameters::dense([]), None)
+        .simulate(&subject, &crate::parameters::dense([]), None)
         .expect("infusion simulation should succeed")
         .0;
 
@@ -590,7 +590,7 @@ fn dense_observations_a_few_ulps_from_event_time_do_not_error() {
         .expect("metadata should validate");
 
         let predictions = ode
-            .simulate_subject(&subject, &crate::parameters::dense([]), None)
+            .simulate(&subject, &crate::parameters::dense([]), None)
             .unwrap_or_else(|error| panic!("{label}: dense grid near event failed: {error}"))
             .0;
         assert_eq!(predictions.predictions().len(), 4);
@@ -666,7 +666,7 @@ fn run_hybrid_phage_infusions(subject: &Subject) -> Vec<f64> {
     .expect("metadata should validate");
 
     let predictions = ode
-        .simulate_subject(subject, &crate::parameters::dense([]), None)
+        .simulate(subject, &crate::parameters::dense([]), None)
         .expect("hybrid phage simulation should succeed")
         .0;
 
@@ -885,17 +885,15 @@ fn changing_the_model_starts_a_fresh_cache() {
         .build();
     let parameters = crate::parameters::dense([]);
 
-    base.estimate_predictions(&subject, &parameters).unwrap();
+    base.predict(&subject, &parameters).unwrap();
     let after_first = MODEL_SWAP_DIFFEQ_CALLS.load(Ordering::SeqCst);
-    base.clone()
-        .estimate_predictions(&subject, &parameters)
-        .unwrap();
+    base.clone().predict(&subject, &parameters).unwrap();
     assert_eq!(MODEL_SWAP_DIFFEQ_CALLS.load(Ordering::SeqCst), after_first);
 
     // Same key, but a changed model must not reuse the shared entry.
     base.clone()
         .with_nout(1)
-        .estimate_predictions(&subject, &parameters)
+        .predict(&subject, &parameters)
         .unwrap();
     assert!(MODEL_SWAP_DIFFEQ_CALLS.load(Ordering::SeqCst) > after_first);
 }

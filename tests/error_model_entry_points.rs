@@ -67,11 +67,11 @@ fn assert_entry_points_agree(
         Array2::from_shape_vec((1, 2), parameters.as_slice().to_vec()).expect("one support point");
     let error_models = cp_error_models();
 
-    let log_likelihood = equation.estimate_log_likelihood(&subject, &parameters, &error_models)?;
+    let log_likelihood = equation.log_likelihood(&subject, &parameters, &error_models)?;
     assert!(log_likelihood.is_finite(), "{name}: {log_likelihood}");
 
-    let (_, likelihood) = equation.simulate_subject(&subject, &parameters, Some(&error_models))?;
-    let likelihood = likelihood.expect("simulate_subject scores when given error models");
+    let (_, likelihood) = equation.simulate(&subject, &parameters, Some(&error_models))?;
+    let likelihood = likelihood.expect("simulate scores when given error models");
     assert_relative_eq!(likelihood.ln(), log_likelihood, max_relative = 1e-10);
 
     let matrix = log_likelihood_matrix(equation, &data, &support_points, &error_models, false)?;
@@ -79,14 +79,14 @@ fn assert_entry_points_agree(
 
     let undeclared = undeclared_error_models();
     assert_unknown_label(
-        &format!("{name} estimate_log_likelihood"),
-        equation.estimate_log_likelihood(&subject, &parameters, &undeclared),
+        &format!("{name} log_likelihood"),
+        equation.log_likelihood(&subject, &parameters, &undeclared),
         "concentration",
     );
     assert_unknown_label(
-        &format!("{name} simulate_subject"),
+        &format!("{name} simulate"),
         equation
-            .simulate_subject(&subject, &parameters, Some(&undeclared))
+            .simulate(&subject, &parameters, Some(&undeclared))
             .map(|(_, likelihood)| likelihood),
         "concentration",
     );
@@ -97,7 +97,7 @@ fn assert_entry_points_agree(
     );
 
     // Predictions without error models are still available.
-    let (predictions, likelihood) = equation.simulate_subject(&subject, &parameters, None)?;
+    let (predictions, likelihood) = equation.simulate(&subject, &parameters, None)?;
     assert!(likelihood.is_none());
     drop(predictions);
     Ok(())
@@ -209,17 +209,17 @@ fn assert_sde_cache_sees_polynomial_changes(
     let subject = subject();
     let mut error_models = cp_error_models();
 
-    let first = sde.estimate_log_likelihood(&subject, &parameters, &error_models)?;
+    let first = sde.log_likelihood(&subject, &parameters, &error_models)?;
     // The likelihood cache is on by default: a repeat call is a cache hit.
     assert_eq!(
-        sde.estimate_log_likelihood(&subject, &parameters, &error_models)?,
+        sde.log_likelihood(&subject, &parameters, &error_models)?,
         first,
         "{name}: repeat call"
     );
 
     // Change only the polynomial; gamma/lambda and its fixed state stay put.
     error_models.set_errorpoly("cp", ErrorPoly::new(5.0, 0.0, 0.0, 0.0))?;
-    let after = sde.estimate_log_likelihood(&subject, &parameters, &error_models)?;
+    let after = sde.log_likelihood(&subject, &parameters, &error_models)?;
     assert!(
         (after - first).abs() > 1e-6,
         "{name}: a polynomial-only change must not reuse the cached likelihood ({first} == {after})"
@@ -228,7 +228,7 @@ fn assert_sde_cache_sees_polynomial_changes(
     // The cache only saves work: without it the likelihood is the same.
     let uncached = sde.clone().disable_cache();
     assert_eq!(
-        uncached.estimate_log_likelihood(&subject, &parameters, &error_models)?,
+        uncached.log_likelihood(&subject, &parameters, &error_models)?,
         after,
         "{name}: cached and uncached likelihoods differ"
     );
@@ -270,7 +270,7 @@ fn equations_without_metadata_accept_only_existing_output_numbers() -> Result<()
 
     let by_position = AssayErrorModels::new().add(0, error_model.clone())?;
     assert!(ode
-        .estimate_log_likelihood(&subject, &parameters, &by_position)?
+        .log_likelihood(&subject, &parameters, &by_position)?
         .is_finite());
 
     // There is no second output, and an equation without metadata has no names.
@@ -278,7 +278,7 @@ fn equations_without_metadata_accept_only_existing_output_numbers() -> Result<()
         let error_models = AssayErrorModels::new().add(label, error_model.clone())?;
         assert_unknown_label(
             &format!("label `{label}`"),
-            ode.estimate_log_likelihood(&subject, &parameters, &error_models),
+            ode.log_likelihood(&subject, &parameters, &error_models),
             label,
         );
     }

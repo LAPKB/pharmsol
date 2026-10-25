@@ -216,7 +216,7 @@ impl<M: OdeModel> ODE<M> {
         subject: &Subject,
         parameters: &[f64],
     ) -> Result<Arc<SubjectPredictions>, PharmsolError> {
-        let simulate = || self.simulate(subject, parameters).map(Arc::new);
+        let simulate = || self.solve(subject, parameters).map(Arc::new);
         match &self.cache {
             Some(cache) => {
                 cache.get_or_try_insert(self.prediction_key(subject, parameters), simulate)
@@ -244,7 +244,7 @@ impl<M: OdeModel> ODE<M> {
         salted_parameters_hash(&[self.rtol, self.atol], solver)
     }
 
-    fn simulate(
+    fn solve(
         &self,
         subject: &Subject,
         parameters: &[f64],
@@ -536,7 +536,7 @@ impl<M: OdeModel> Equation for ODE<M> {
         self.model.noutputs()
     }
 
-    fn estimate_predictions(
+    fn predict(
         &self,
         subject: &Subject,
         parameters: &[f64],
@@ -545,7 +545,7 @@ impl<M: OdeModel> Equation for ODE<M> {
             .map(Arc::unwrap_or_clone)
     }
 
-    fn estimate_log_likelihood(
+    fn log_likelihood(
         &self,
         subject: &Subject,
         parameters: &[f64],

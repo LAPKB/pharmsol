@@ -141,7 +141,7 @@ impl<M: SdeModel> SDE<M> {
     }
 
     /// Simulate a subject's particles; see [`Mode`].
-    fn simulate(
+    fn run_particles(
         &self,
         subject: &Subject,
         parameters: &[f64],
@@ -308,14 +308,14 @@ impl<M: SdeModel> SDE<M> {
     }
 
     /// Cached particle-filter log-likelihood.
-    fn log_likelihood(
+    fn cached_log_likelihood(
         &self,
         subject: &Subject,
         parameters: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         let simulate = || {
-            self.simulate(subject, parameters, Mode::Score(error_models))
+            self.run_particles(subject, parameters, Mode::Score(error_models))
                 .map(|run| run.log_likelihood)
         };
         match &self.cache {
@@ -501,7 +501,7 @@ impl Predictions for Array2<Prediction> {
     /// Log-likelihood of the mean prediction across particles.
     ///
     /// This scores the particle cloud as if it were deterministic. For the
-    /// particle-filter estimate, use [`Equation::estimate_log_likelihood`].
+    /// particle-filter estimate, use [`Equation::log_likelihood`].
     fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError> {
         self.get_predictions()
             .iter()
@@ -552,39 +552,39 @@ impl<M: SdeModel> Equation for SDE<M> {
 
     /// Particle predictions without filtering: each particle follows its own
     /// path through every observation.
-    fn estimate_predictions(
+    fn predict(
         &self,
         subject: &Subject,
         parameters: &[f64],
     ) -> Result<Array2<Prediction>, PharmsolError> {
-        self.simulate(subject, parameters, Mode::Predict)?
+        self.run_particles(subject, parameters, Mode::Predict)?
             .into_matrix(self.nparticles)
     }
 
     /// Particle-filter estimate of the log-likelihood.
-    fn estimate_log_likelihood(
+    fn log_likelihood(
         &self,
         subject: &Subject,
         parameters: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         self.validate_error_models(error_models)?;
-        self.log_likelihood(subject, parameters, error_models)
+        self.cached_log_likelihood(subject, parameters, error_models)
     }
 
     /// One particle-filter run: the filtered (resampled) particle predictions
     /// and the likelihood estimate they produced. Uncached.
-    fn simulate_subject(
+    fn simulate(
         &self,
         subject: &Subject,
         parameters: &[f64],
         error_models: Option<&AssayErrorModels>,
     ) -> Result<(Array2<Prediction>, Option<f64>), PharmsolError> {
         let Some(error_models) = error_models else {
-            return Ok((self.estimate_predictions(subject, parameters)?, None));
+            return Ok((self.predict(subject, parameters)?, None));
         };
         self.validate_error_models(error_models)?;
-        let run = self.simulate(subject, parameters, Mode::ScoreAndPredict(error_models))?;
+        let run = self.run_particles(subject, parameters, Mode::ScoreAndPredict(error_models))?;
         let likelihood = run.log_likelihood.exp();
         Ok((run.into_matrix(self.nparticles)?, Some(likelihood)))
     }

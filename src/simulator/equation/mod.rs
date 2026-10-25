@@ -168,18 +168,14 @@ pub trait Equation: Clone + Send + Sync + 'static {
     /// Simulate a subject and return its predictions.
     ///
     /// Results may be served from the equation's cache.
-    fn estimate_predictions(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-    ) -> Result<Self::P, PharmsolError>;
+    fn predict(&self, subject: &Subject, parameters: &[f64]) -> Result<Self::P, PharmsolError>;
 
     /// Log-likelihood of the subject's observations.
     ///
     /// Uses observation-based sigma, appropriate for non-parametric algorithms.
     /// For parametric algorithms (SAEM, FOCE), use [`crate::ResidualErrorModels`]
     /// directly.
-    fn estimate_log_likelihood(
+    fn log_likelihood(
         &self,
         subject: &Subject,
         parameters: &[f64],
@@ -190,7 +186,7 @@ pub trait Equation: Clone + Send + Sync + 'static {
     /// likelihood (not log-likelihood) of its observations.
     ///
     /// The default scores the returned predictions, so it simulates once.
-    fn simulate_subject(
+    fn simulate(
         &self,
         subject: &Subject,
         parameters: &[f64],
@@ -199,7 +195,7 @@ pub trait Equation: Clone + Send + Sync + 'static {
         if let Some(error_models) = error_models {
             self.validate_error_models(error_models)?;
         }
-        let predictions = self.estimate_predictions(subject, parameters)?;
+        let predictions = self.predict(subject, parameters)?;
         let likelihood = match error_models {
             Some(error_models) => Some(predictions.log_likelihood(error_models)?.exp()),
             None => None,

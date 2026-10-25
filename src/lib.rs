@@ -49,7 +49,7 @@
 //!
 //! let parameters = Parameters::with_model(&model, [("ke", 1.022), ("v", 194.0)])
 //!     .expect("valid named parameters");
-//! let predictions = model.estimate_predictions(&subject, &parameters)?;
+//! let predictions = model.predict(&subject, &parameters)?;
 //! assert_eq!(predictions.flat_predictions().len(), 2);
 //! # Ok::<(), pharmsol::PharmsolError>(())
 //! ```

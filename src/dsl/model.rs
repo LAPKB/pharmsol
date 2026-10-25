@@ -1510,13 +1510,13 @@ mod tests {
                 std::sync::Arc::new(expected.clone()),
             );
 
-        let dense = Equation::estimate_predictions(&model, &subject, &support_point)
+        let dense = Equation::predict(&model, &subject, &support_point)
             .expect("dense predictions should come from the cache");
         assert_eq!(dense.flat_predictions(), expected.flat_predictions());
 
         let parameters =
             Parameters::with_model(&model, [("ke", 0.2), ("v", 20.0)]).expect("valid parameters");
-        let predictions = Equation::estimate_predictions(&model, &subject, &parameters)
+        let predictions = Equation::predict(&model, &subject, &parameters)
             .expect("predictions should come from the cache");
         assert_eq!(predictions.flat_predictions(), expected.flat_predictions());
 
@@ -1547,7 +1547,7 @@ mod tests {
             .insert(key, std::sync::Arc::new(expected.clone()));
 
         let actual = compiled
-            .estimate_predictions(&subject, &parameters)
+            .predict(&subject, &parameters)
             .expect("compiled runtime should use cached prediction");
 
         match actual {
@@ -1560,7 +1560,7 @@ mod tests {
         }
 
         let direct = model
-            .estimate_predictions(&subject, &parameters)
+            .predict(&subject, &parameters)
             .expect("the equation should return the cached prediction");
         assert_eq!(direct.flat_predictions(), expected.flat_predictions());
     }

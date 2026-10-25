@@ -358,12 +358,12 @@ fn analytical_macro_lowering_matches_handwritten_metadata_and_predictions() {
     assert_eq!(macro_model.state_index("central"), Some(0));
 
     let macro_predictions = macro_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("macro analytical model should simulate")
         .flat_predictions()
         .to_vec();
     let handwritten_predictions = handwritten_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("handwritten analytical model should simulate")
         .flat_predictions()
         .to_vec();
@@ -399,12 +399,12 @@ fn analytical_macro_supports_extra_parameters_and_named_route_bindings() {
     );
 
     let macro_predictions = macro_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("macro absorption model should simulate")
         .flat_predictions()
         .to_vec();
     let handwritten_predictions = handwritten_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("handwritten absorption model should simulate")
         .flat_predictions()
         .to_vec();
@@ -438,12 +438,12 @@ fn analytical_macro_shared_input_lowering_matches_handwritten_metadata_and_predi
     assert_eq!(macro_model.state_index("central"), Some(1));
 
     let macro_predictions = macro_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("macro shared-input analytical model should simulate")
         .flat_predictions()
         .to_vec();
     let handwritten_predictions = handwritten_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("handwritten shared-input analytical model should simulate")
         .flat_predictions()
         .to_vec();
@@ -474,12 +474,12 @@ fn analytical_macro_covariates_lower_to_handwritten_behavior() {
     .expect("valid named parameters");
 
     let macro_predictions = macro_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("macro covariate analytical model should simulate")
         .flat_predictions()
         .to_vec();
     let handwritten_predictions = handwritten_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("handwritten covariate analytical model should simulate")
         .flat_predictions()
         .to_vec();
