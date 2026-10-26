@@ -416,7 +416,28 @@ fn seed_selects_independent_particle_paths() {
 }
 
 #[test]
-fn impossible_observation_has_zero_likelihood() {
+fn particle_filter_preserves_finite_tail_log_likelihoods() {
+    let predictions = vec![
+        Prediction {
+            observation: Some(20.0),
+            ..Prediction::default()
+        };
+        16
+    ];
+    let error_models = filter_error_models();
+    let expected = predictions[0].log_likelihood(&error_models).unwrap();
+    assert!(expected.is_finite());
+    assert_eq!(expected.exp(), 0.0);
+
+    let (actual, indices) = filter(&predictions, &error_models, &mut StdRng::seed_from_u64(0))
+        .unwrap()
+        .expect("finite particle log-likelihoods must not become zero weights");
+    assert_eq!(actual, expected);
+    assert_eq!(indices, (0..predictions.len()).collect::<Vec<_>>());
+}
+
+#[test]
+fn far_observation_has_finite_log_likelihood() {
     use crate::data::error_model::{AssayErrorModel, ErrorPoly};
     let sde = simple_sde();
     let subject = Subject::builder("far").observation(1.0, 1.0e6, 0).build();
@@ -430,7 +451,7 @@ fn impossible_observation_has_zero_likelihood() {
     let log_likelihood = sde
         .log_likelihood(&subject, &[1.0, 50.0], &error_models)
         .unwrap();
-    assert_eq!(log_likelihood, f64::NEG_INFINITY);
+    assert!(log_likelihood.is_finite());
 }
 
 #[test]

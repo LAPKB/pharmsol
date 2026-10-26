@@ -411,21 +411,27 @@ fn filter(
     rng: &mut StdRng,
 ) -> Result<Option<(f64, Vec<usize>)>, PharmsolError> {
     let mut weights = Vec::with_capacity(predictions.len());
+    let mut max_log_weight = f64::NEG_INFINITY;
     for prediction in predictions {
         // A particle the observation cannot have come from (including one
         // whose state diverged to NaN) gets zero weight.
-        let weight = match prediction.log_likelihood(error_models) {
-            Ok(log_likelihood) => log_likelihood.exp(),
-            Err(PharmsolError::NonFiniteLikelihood(_)) => 0.0,
+        let log_weight = match prediction.log_likelihood(error_models) {
+            Ok(log_likelihood) => log_likelihood,
+            Err(PharmsolError::NonFiniteLikelihood(_)) => f64::NEG_INFINITY,
             Err(error) => return Err(error),
         };
-        weights.push(weight);
+        max_log_weight = max_log_weight.max(log_weight);
+        weights.push(log_weight);
     }
-    let total: f64 = weights.iter().sum();
-    if !(total > 0.0 && total.is_finite()) {
+    if !max_log_weight.is_finite() {
         return Ok(None);
     }
-    let log_mean = (total / weights.len() as f64).ln();
+    // Shift before exponentiating to keep normalization in range.
+    weights
+        .iter_mut()
+        .for_each(|weight| *weight = (*weight - max_log_weight).exp());
+    let total: f64 = weights.iter().sum();
+    let log_mean = max_log_weight + (total / weights.len() as f64).ln();
     weights.iter_mut().for_each(|weight| *weight /= total);
     Ok(Some((log_mean, systematic_resample(&weights, rng))))
 }
