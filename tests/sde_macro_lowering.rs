@@ -505,10 +505,10 @@ fn sde_macro_lowering_matches_handwritten_metadata_and_predictions() {
     assert_eq!(macro_model.state_index("central"), Some(0));
 
     let macro_predictions = macro_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("macro SDE model should simulate");
     let handwritten_predictions = handwritten_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("handwritten SDE model should simulate");
 
     assert_prediction_match(
@@ -542,10 +542,10 @@ fn sde_macro_supports_lag_fa_init_and_named_sigma_bindings() {
     assert_eq!(macro_model.state_index("gut"), Some(0));
 
     let macro_predictions = macro_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("macro absorption SDE should simulate");
     let handwritten_predictions = handwritten_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("handwritten absorption SDE should simulate");
 
     assert_prediction_match(
@@ -581,10 +581,10 @@ fn sde_macro_shared_input_lowering_matches_handwritten_metadata_and_predictions(
     assert_eq!(macro_model.state_index("central"), Some(1));
 
     let macro_predictions = macro_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("macro shared-input SDE should simulate");
     let handwritten_predictions = handwritten_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("handwritten shared-input SDE should simulate");
 
     assert_prediction_match(
@@ -617,10 +617,10 @@ fn sde_macro_covariates_lower_to_handwritten_behavior() {
     .expect("valid named parameters");
 
     let macro_predictions = macro_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("macro covariate SDE should simulate");
     let handwritten_predictions = handwritten_model
-        .estimate_predictions(&subject, &support_point)
+        .predict(&subject, &support_point)
         .expect("handwritten covariate SDE should simulate");
 
     assert_prediction_match(

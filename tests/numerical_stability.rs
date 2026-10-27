@@ -104,11 +104,9 @@ fn assert_models_agree(
     let analytical_params = parameters_for_analytical(label, analytical, param_names, params);
     let ode_params = parameters_for_ode(label, ode, param_names, params);
     let analytical_predictions = analytical
-        .estimate_predictions(subject, &analytical_params)
+        .predict(subject, &analytical_params)
         .expect("analytical predictions");
-    let ode_predictions = ode
-        .estimate_predictions(subject, &ode_params)
-        .expect("ode predictions");
+    let ode_predictions = ode.predict(subject, &ode_params).expect("ode predictions");
 
     let expected = analytical_predictions.flat_predictions();
     let actual = ode_predictions.flat_predictions();

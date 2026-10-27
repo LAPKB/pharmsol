@@ -3,10 +3,7 @@ pub mod equation;
 pub(crate) mod likelihood;
 use diffsol::{NalgebraMat, NalgebraVec};
 
-use crate::{
-    data::{Covariates, Infusion},
-    simulator::likelihood::SubjectPredictions,
-};
+use crate::data::Covariates;
 
 use std::collections::HashMap;
 

@@ -53,7 +53,7 @@ fn main() {
     let params = Parameters::with_model(&ode, [("ka", ka), ("ke", ke), ("tlag", tlag), ("v", v)])
         .expect("valid named parameters");
 
-    let result = ode.estimate_predictions(&subject, &params).unwrap();
+    let result = ode.predict(&subject, &params).unwrap();
 
     for pred in result.predictions() {
         println!(

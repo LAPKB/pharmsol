@@ -1,5 +1,6 @@
 use super::{ExplicitStepBudgetConfig, MIN_TSIT45_PROGRESS_FRACTION_PER_WINDOW};
-use crate::{Covariates, Infusion, PharmsolError};
+use crate::simulator::equation::model::InfusionDose;
+use crate::{Covariates, PharmsolError};
 use diffsol::{
     ConstantOp, LinearOp, MatrixCommon, NalgebraContext, NalgebraMat, NonLinearOp,
     NonLinearOpJacobian, OdeEquations, OdeEquationsRef, Op, UnitCallable, Vector,
@@ -146,15 +147,12 @@ struct IntegrationSchedule {
 }
 
 impl IntegrationSchedule {
-    fn new<'a, I>(
+    fn new(
         ndrugs: usize,
-        infusions: I,
+        infusions: &[InfusionDose],
         covariate_breakpoints: &[f64],
         covariate_discontinuities: &[f64],
-    ) -> Result<Self, PharmsolError>
-    where
-        I: IntoIterator<Item = &'a Infusion>,
-    {
+    ) -> Result<Self, PharmsolError> {
         let mut integration_boundary_times = covariate_breakpoints.to_vec();
         let mut discontinuity_times = covariate_discontinuities.to_vec();
         if ndrugs == 0 {
@@ -174,25 +172,23 @@ impl IntegrationSchedule {
         let mut saw_infusion = false;
         for infusion in infusions {
             saw_infusion = true;
-            if infusion.duration() <= 0.0 {
+            if infusion.duration <= 0.0 {
                 continue;
             }
 
-            let input = infusion
-                .input_index()
-                .ok_or_else(|| PharmsolError::unknown_input_label(infusion.input(), &[]))?;
+            let input = infusion.input;
             if input >= ndrugs {
                 return Err(PharmsolError::InputOutOfRange { input, ndrugs });
             }
 
-            let rate = infusion.amount() / infusion.duration();
-            let end = infusion.time() + infusion.duration();
+            let rate = infusion.rate();
+            let end = infusion.end();
 
-            per_input[input].push((infusion.time(), rate));
+            per_input[input].push((infusion.time, rate));
             per_input[input].push((end, -rate));
-            integration_boundary_times.push(infusion.time());
+            integration_boundary_times.push(infusion.time);
             integration_boundary_times.push(end);
-            discontinuity_times.push(infusion.time());
+            discontinuity_times.push(infusion.time);
             discontinuity_times.push(end);
         }
 
@@ -846,19 +842,16 @@ where
     /// This avoids an allocation when the caller already has a V representation
     /// while keeping all model callbacks in absolute time.
     #[allow(clippy::too_many_arguments)]
-    pub fn with_params_v<'b, I>(
+    pub(crate) fn with_params_v(
         func: F,
         nstates: usize,
         ndrugs: usize,
         p_as_v: V,
         covariates: &Covariates,
-        infusions: I,
+        infusions: &[InfusionDose],
         init: V,
         time_origin: f64,
-    ) -> Result<Self, PharmsolError>
-    where
-        I: IntoIterator<Item = &'b Infusion>,
-    {
+    ) -> Result<Self, PharmsolError> {
         if !time_origin.is_finite() {
             return Err(PharmsolError::OtherError(format!(
                 "invalid ODE time origin {time_origin:?}: the resolved event schedule must be finite"
@@ -1012,7 +1005,7 @@ mod tests {
     fn pm_rhs_jvp_zero_direction_skips_callback() {
         let callback_count = Cell::new(0);
         let covariates = Covariates::default();
-        let infusions = Vec::<Infusion>::new();
+        let infusions = Vec::<InfusionDose>::new();
         let problem = PMProblem::with_params_v(
             |x, _p, _t, dx, _bolus, _rateiv, _cov| {
                 callback_count.set(callback_count.get() + 1);
@@ -1022,7 +1015,7 @@ mod tests {
             0,
             V::zeros(0, NalgebraContext::new()),
             &covariates,
-            infusions.iter(),
+            &infusions,
             V::zeros(1, NalgebraContext::new()),
             0.0,
         )
@@ -1042,7 +1035,7 @@ mod tests {
     fn pm_rhs_jvp_preserves_nonfinite_inputs() {
         let callback_count = Cell::new(0);
         let covariates = Covariates::default();
-        let infusions = Vec::<Infusion>::new();
+        let infusions = Vec::<InfusionDose>::new();
         let problem = PMProblem::with_params_v(
             |_x, _p, _t, dx, _bolus, _rateiv, _cov| {
                 callback_count.set(callback_count.get() + 1);
@@ -1052,7 +1045,7 @@ mod tests {
             0,
             V::zeros(0, NalgebraContext::new()),
             &covariates,
-            infusions.iter(),
+            &infusions,
             V::zeros(1, NalgebraContext::new()),
             0.0,
         )
@@ -1082,7 +1075,7 @@ mod tests {
     fn pm_rhs_jvp_preserves_nonfinite_rhs_differences_without_retry() {
         let callback_count = Cell::new(0);
         let covariates = Covariates::default();
-        let infusions = Vec::<Infusion>::new();
+        let infusions = Vec::<InfusionDose>::new();
         let problem = PMProblem::with_params_v(
             |_x, _p, _t, dx, _bolus, _rateiv, _cov| {
                 callback_count.set(callback_count.get() + 1);
@@ -1093,7 +1086,7 @@ mod tests {
             0,
             V::zeros(0, NalgebraContext::new()),
             &covariates,
-            infusions.iter(),
+            &infusions,
             V::zeros(2, NalgebraContext::new()),
             0.0,
         )
@@ -1119,14 +1112,14 @@ mod tests {
     #[test]
     fn pm_rhs_jvp_matches_nonlinear_square_rhs() {
         let covariates = Covariates::default();
-        let infusions = Vec::<Infusion>::new();
+        let infusions = Vec::<InfusionDose>::new();
         let problem = PMProblem::with_params_v(
             |x, _p, _t, dx, _bolus, _rateiv, _cov| dx[0] = x[0] * x[0],
             1,
             0,
             V::zeros(0, NalgebraContext::new()),
             &covariates,
-            infusions.iter(),
+            &infusions,
             V::zeros(1, NalgebraContext::new()),
             0.0,
         )
@@ -1144,7 +1137,12 @@ mod tests {
     #[test]
     fn pm_rhs_jvp_uses_absolute_time_and_active_infusion_rate() {
         let covariates = Covariates::default();
-        let infusions = [Infusion::new(10.0, 3.0, 0, 1.0, 0)];
+        let infusions = [InfusionDose {
+            time: 10.0,
+            duration: 1.0,
+            amount: 3.0,
+            input: 0,
+        }];
         let problem = PMProblem::with_params_v(
             |x, _p, t, dx, _bolus, rateiv, _cov| {
                 dx[0] = (rateiv[0] + t) * x[0] * x[0];
@@ -1153,7 +1151,7 @@ mod tests {
             1,
             V::zeros(0, NalgebraContext::new()),
             &covariates,
-            infusions.iter(),
+            &infusions,
             V::zeros(1, NalgebraContext::new()),
             10.0,
         )
@@ -1183,7 +1181,12 @@ mod tests {
         covariate.add_observation(1.0, 2.0);
         covariate.add_observation(2.0, 4.0);
         covariates.add_covariate("rate".into(), covariate);
-        let infusions = [Infusion::new(0.0, 1.0, 0, 1.0, 0)];
+        let infusions = [InfusionDose {
+            time: 0.0,
+            duration: 1.0,
+            amount: 1.0,
+            input: 0,
+        }];
 
         let problem = PMProblem::with_params_v(
             |_x, _p, _t, dx, _bolus, _rateiv, _cov| dx[0] = 0.0,
@@ -1191,7 +1194,7 @@ mod tests {
             1,
             V::zeros(0, NalgebraContext::new()),
             &covariates,
-            infusions.iter(),
+            &infusions,
             V::zeros(1, NalgebraContext::new()),
             0.0,
         )
@@ -1217,7 +1220,7 @@ mod tests {
             0,
             V::zeros(0, NalgebraContext::new()),
             &source,
-            std::iter::empty::<&Infusion>(),
+            &[],
             V::zeros(1, NalgebraContext::new()),
             0.0,
         )

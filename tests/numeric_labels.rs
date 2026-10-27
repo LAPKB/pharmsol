@@ -98,14 +98,14 @@ fn numeric_output_binds_error_models_from_pmetrics_data_like_a_named_output() {
     let named_subject = &named_data.subjects()[0];
 
     let numeric_ll = numeric
-        .estimate_log_likelihood(
+        .log_likelihood(
             numeric_subject,
             &one_cpt_parameters(&numeric),
             &assay_error_models("1"),
         )
         .expect("assay error model for output `1` binds");
     let named_ll = named
-        .estimate_log_likelihood(
+        .log_likelihood(
             named_subject,
             &one_cpt_parameters(&named),
             &assay_error_models("cp"),
@@ -143,7 +143,7 @@ fn error_models_for_undeclared_labels_fail_to_bind() {
     // `0` is not a position, and `outeq_1` / `01` are not aliases of `1`.
     for label in ["0", "2", "01", "outeq_1", "cp"] {
         let error = model
-            .estimate_log_likelihood(subject, &parameters, &assay_error_models(label))
+            .log_likelihood(subject, &parameters, &assay_error_models(label))
             .expect_err("undeclared assay error-model label must not bind");
         assert!(
             matches!(
@@ -172,9 +172,7 @@ fn prefixed_looking_data_labels_are_not_aliases() {
     for (input, outeq) in [("input_1", "1"), ("1", "outeq_1"), ("1", "0"), ("0", "1")] {
         let data = pmetrics_data(input, outeq);
         assert!(
-            model
-                .estimate_predictions(data.subjects()[0], &parameters)
-                .is_err(),
+            model.predict(data.subjects()[0], &parameters).is_err(),
             "INPUT={input}, OUTEQ={outeq} must not resolve"
         );
     }
@@ -205,7 +203,7 @@ fn non_contiguous_numeric_output_is_a_single_named_slot() {
 
     let parameters = one_cpt_parameters(&model);
     let predictions = model
-        .estimate_predictions(&pmetrics_subject("iv", "2"), &parameters)
+        .predict(&pmetrics_subject("iv", "2"), &parameters)
         .expect("OUTEQ=2 resolves to the output declared as `2`");
     assert!(prediction_values(&predictions)
         .iter()
@@ -213,7 +211,7 @@ fn non_contiguous_numeric_output_is_a_single_named_slot() {
 
     for outeq in ["1", "0"] {
         let error = model
-            .estimate_predictions(&pmetrics_subject("iv", outeq), &parameters)
+            .predict(&pmetrics_subject("iv", outeq), &parameters)
             .expect_err("undeclared numeric output must fail");
         assert!(
             matches!(&error, PharmsolError::UnknownOutputLabel { label, .. } if label == outeq),
@@ -223,7 +221,7 @@ fn non_contiguous_numeric_output_is_a_single_named_slot() {
 
     let error_models = assay_error_models("2");
     model
-        .estimate_log_likelihood(&pmetrics_subject("iv", "2"), &parameters, &error_models)
+        .log_likelihood(&pmetrics_subject("iv", "2"), &parameters, &error_models)
         .expect("assay error model for output `2` binds to the only slot");
 }
 
@@ -287,13 +285,13 @@ fn ode_macro_numeric_labels_match_named_labels() {
 
     let values = [("ka", 1.0), ("ke", 0.2), ("v", 10.0)];
     let numeric_predictions = numeric
-        .estimate_predictions(
+        .predict(
             &numeric_subject(),
             &Parameters::with_model(&numeric, values).unwrap(),
         )
         .expect("numeric labels simulate");
     let named_predictions = named
-        .estimate_predictions(
+        .predict(
             &named_subject(),
             &Parameters::with_model(&named, values).unwrap(),
         )
@@ -343,13 +341,13 @@ fn analytical_macro_numeric_labels_match_named_labels() {
 
     let values = [("ka", 1.0), ("ke", 0.2), ("v", 10.0)];
     let numeric_predictions = numeric
-        .estimate_predictions(
+        .predict(
             &numeric_subject(),
             &Parameters::with_model(&numeric, values).unwrap(),
         )
         .expect("numeric labels simulate");
     let named_predictions = named
-        .estimate_predictions(
+        .predict(
             &named_subject(),
             &Parameters::with_model(&named, values).unwrap(),
         )
@@ -416,13 +414,13 @@ fn sde_macro_numeric_labels_match_named_labels() {
 
     let values = [("ka", 1.0), ("ke", 0.2), ("v", 10.0)];
     let numeric_predictions = numeric
-        .estimate_predictions(
+        .predict(
             &numeric_subject(),
             &Parameters::with_model(&numeric, values).unwrap(),
         )
         .expect("numeric labels simulate");
     let named_predictions = named
-        .estimate_predictions(
+        .predict(
             &named_subject(),
             &Parameters::with_model(&named, values).unwrap(),
         )
@@ -457,10 +455,10 @@ fn prefixed_looking_names_are_ordinary_labels() {
     let parameters = Parameters::with_model(&model, [("ke", 0.2), ("v", 10.0)]).unwrap();
 
     model
-        .estimate_predictions(&pmetrics_subject("outeq_1", "input_1"), &parameters)
+        .predict(&pmetrics_subject("outeq_1", "input_1"), &parameters)
         .expect("prefixed-looking names resolve exactly");
     model
-        .estimate_log_likelihood(
+        .log_likelihood(
             &pmetrics_subject("outeq_1", "input_1"),
             &parameters,
             &assay_error_models("input_1"),
@@ -469,7 +467,7 @@ fn prefixed_looking_names_are_ordinary_labels() {
 
     for (input, outeq) in [("1", "input_1"), ("outeq_1", "1")] {
         assert!(model
-            .estimate_predictions(&pmetrics_subject(input, outeq), &parameters)
+            .predict(&pmetrics_subject(input, outeq), &parameters)
             .is_err());
     }
 }
@@ -515,14 +513,14 @@ out(cp) = central / v
         let values = [("ke", 0.2), ("v", 10.0)];
 
         let numeric_ll = numeric
-            .estimate_log_likelihood(
+            .log_likelihood(
                 &pmetrics_subject("1", "1"),
                 &Parameters::with_model(&numeric, values).unwrap(),
                 &assay_error_models("1"),
             )
             .expect("assay error model for DSL output `1` binds");
         let named_ll = named
-            .estimate_log_likelihood(
+            .log_likelihood(
                 &pmetrics_subject("iv", "cp"),
                 &Parameters::with_model(&named, values).unwrap(),
                 &assay_error_models("cp"),
@@ -532,14 +530,14 @@ out(cp) = central / v
         assert_relative_eq!(numeric_ll, named_ll, max_relative = 1e-12);
 
         assert!(numeric
-            .estimate_log_likelihood(
+            .log_likelihood(
                 &pmetrics_subject("1", "1"),
                 &Parameters::with_model(&numeric, values).unwrap(),
                 &assay_error_models("outeq_1"),
             )
             .is_err());
         assert!(numeric
-            .estimate_predictions(
+            .predict(
                 &pmetrics_subject("input_1", "1"),
                 &Parameters::with_model(&numeric, values).unwrap(),
             )

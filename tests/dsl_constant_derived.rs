@@ -16,7 +16,7 @@ fn prediction(
         .missing_observation(0.0, "cp")
         .build();
     let predictions = model
-        .estimate_predictions(&subject, &support_point)?
+        .predict(&subject, &support_point)?
         .into_subject()
         .ok_or("expected subject predictions")?;
     Ok(predictions.predictions()[0].prediction())

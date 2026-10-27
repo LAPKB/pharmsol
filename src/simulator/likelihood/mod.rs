@@ -136,7 +136,7 @@ pub fn log_likelihood_batch(
     equation.validate_output_labels(residual_error_models.labels())?;
 
     let score_subject = |subject: &Subject, parameter_row: &[f64]| {
-        let predictions = match equation.estimate_predictions_dense(subject, parameter_row) {
+        let predictions = match equation.predict(subject, parameter_row) {
             Ok(preds) => preds,
             Err(_) => return f64::NEG_INFINITY,
         };
@@ -218,7 +218,7 @@ pub fn log_likelihood_subject(
     }
 
     // Simulate to get predictions
-    let predictions = match equation.estimate_predictions_dense(subject, params.as_slice()) {
+    let predictions = match equation.predict(subject, params.as_slice()) {
         Ok(preds) => preds,
         Err(_) => return f64::NEG_INFINITY,
     };
