@@ -101,10 +101,8 @@ fn one_cmt_iv() {
     let subject = subject_iv("iv", "cp");
     let parameters = Parameters::with_model(&analytical, [("ke", 0.1), ("v", 50.0)]).unwrap();
 
-    let pred_a = analytical
-        .estimate_predictions(&subject, &parameters)
-        .unwrap();
-    let pred_o = ode.estimate_predictions(&subject, &parameters).unwrap();
+    let pred_a = analytical.predict(&subject, &parameters).unwrap();
+    let pred_o = ode.predict(&subject, &parameters).unwrap();
     print_comparison("One-compartment IV", &pred_a, &pred_o);
 }
 
@@ -144,10 +142,8 @@ fn one_cmt_oral() {
     let parameters =
         Parameters::with_model(&analytical, [("ka", 1.0), ("ke", 0.1), ("v", 50.0)]).unwrap();
 
-    let pred_a = analytical
-        .estimate_predictions(&subject, &parameters)
-        .unwrap();
-    let pred_o = ode.estimate_predictions(&subject, &parameters).unwrap();
+    let pred_a = analytical.predict(&subject, &parameters).unwrap();
+    let pred_o = ode.predict(&subject, &parameters).unwrap();
     print_comparison("One-compartment oral", &pred_a, &pred_o);
 }
 
@@ -190,10 +186,8 @@ fn two_cmt_iv() {
     )
     .unwrap();
 
-    let pred_a = analytical
-        .estimate_predictions(&subject, &parameters)
-        .unwrap();
-    let pred_o = ode.estimate_predictions(&subject, &parameters).unwrap();
+    let pred_a = analytical.predict(&subject, &parameters).unwrap();
+    let pred_o = ode.predict(&subject, &parameters).unwrap();
     print_comparison("Two-compartment IV", &pred_a, &pred_o);
 }
 
@@ -243,10 +237,8 @@ fn two_cmt_oral() {
     )
     .unwrap();
 
-    let pred_a = analytical
-        .estimate_predictions(&subject, &parameters)
-        .unwrap();
-    let pred_o = ode.estimate_predictions(&subject, &parameters).unwrap();
+    let pred_a = analytical.predict(&subject, &parameters).unwrap();
+    let pred_o = ode.predict(&subject, &parameters).unwrap();
     print_comparison("Two-compartment oral", &pred_a, &pred_o);
 }
 

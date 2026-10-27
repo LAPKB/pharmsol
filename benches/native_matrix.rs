@@ -41,7 +41,7 @@ fn bench_log_likelihood<E: Equation>(
     b.iter(|| {
         black_box(
             model
-                .estimate_log_likelihood(
+                .log_likelihood(
                     black_box(subject),
                     black_box(theta),
                     black_box(error_models),
@@ -134,7 +134,7 @@ fn cache_hit_group(c: &mut Criterion) {
     let model = macro_ode(workload);
     let theta = Parameters::with_model(&model, named_params(workload)).unwrap();
     model
-        .estimate_log_likelihood(&subject, &theta, &error_models)
+        .log_likelihood(&subject, &theta, &error_models)
         .unwrap();
 
     group.bench_function(id(workload, SolverKind::Ode), |b| {

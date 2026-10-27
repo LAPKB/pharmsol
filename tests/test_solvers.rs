@@ -59,7 +59,7 @@ fn preds(solver: OdeSolver) -> Vec<f64> {
     let parameters = Parameters::with_model(&model, [("ke", 0.1), ("v", 50.0)])
         .expect("solver selection parameters should validate");
     model
-        .estimate_predictions(&sub, &parameters)
+        .predict(&sub, &parameters)
         .unwrap()
         .flat_predictions()
         .to_vec()

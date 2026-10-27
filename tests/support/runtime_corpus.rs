@@ -429,7 +429,7 @@ pub fn estimate_runtime_predictions(
     model: &CompiledRuntimeModel,
 ) -> Result<RuntimePredictions, Box<dyn Error>> {
     let (subject, parameters) = runtime_prediction_inputs(case, model)?;
-    Ok(model.estimate_predictions(&subject, &parameters)?)
+    Ok(model.predict(&subject, &parameters)?)
 }
 
 pub fn runtime_prediction_inputs(
@@ -618,7 +618,7 @@ fn reference_ode_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
     )
     .expect("reference ODE parameters should validate");
 
-    Ok(model.estimate_predictions(&subject, &parameters)?)
+    Ok(model.predict(&subject, &parameters)?)
 }
 
 fn reference_ode_full_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
@@ -800,7 +800,7 @@ fn reference_ode_full_predictions() -> Result<SubjectPredictions, Box<dyn Error>
     )
     .expect("reference full ODE parameters should validate");
 
-    Ok(model.estimate_predictions(&subject, &parameters)?)
+    Ok(model.predict(&subject, &parameters)?)
 }
 
 fn reference_analytical_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
@@ -859,7 +859,7 @@ fn reference_analytical_predictions() -> Result<SubjectPredictions, Box<dyn Erro
     )
     .expect("reference analytical parameters should validate");
 
-    Ok(model.estimate_predictions(&subject, &parameters)?)
+    Ok(model.predict(&subject, &parameters)?)
 }
 
 fn reference_analytical_full_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
@@ -962,7 +962,7 @@ fn reference_analytical_full_predictions() -> Result<SubjectPredictions, Box<dyn
     )
     .expect("reference full analytical parameters should validate");
 
-    Ok(model.estimate_predictions(&subject, &parameters)?)
+    Ok(model.predict(&subject, &parameters)?)
 }
 
 fn reference_sde_predictions() -> Result<Array2<Prediction>, Box<dyn Error>> {
@@ -1035,5 +1035,5 @@ fn reference_sde_predictions() -> Result<Array2<Prediction>, Box<dyn Error>> {
     )
     .expect("reference SDE parameters should validate");
 
-    Ok(model.estimate_predictions(&subject, &parameters)?)
+    Ok(model.predict(&subject, &parameters)?)
 }

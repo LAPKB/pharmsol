@@ -24,7 +24,7 @@ fn subject() -> Subject {
 
 fn prediction(model: &CompiledRuntimeModel, parameters: &Parameters) -> f64 {
     model
-        .estimate_predictions(&subject(), parameters)
+        .predict(&subject(), parameters)
         .expect("estimate_effect_2 runtime prediction")
         .into_subject()
         .expect("ODE runtime returns subject predictions")

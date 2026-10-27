@@ -16,13 +16,22 @@ Code contributions should be submitted as pull requests, and may be submitted fo
 
 ## Implementing a new backend
 
-`pharmsol` is designed to be extensible with new simulation backends.
+`pharmsol` separates *what* a model evaluates from *how* it is advanced in time.
 
-1. Implement the appropriate traits (`Equation`, `EquationTypes`, etc.)
-2. Add comprehensive tests comparing with analytical solutions when possible
-3. Include performance benchmarks
-4. Document the mathematical approach and implementation details
-5. Provide example usage in the documentation
+- A new source of model functions (like the DSL's `JitModel`) implements
+  `Model` plus the family trait it supports (`OdeModel`, `AnalyticalModel`
+  or `SdeModel`). The existing `ODE`, `Analytical` and `SDE` drivers then
+  run it, with caching and the `Equation` interface included.
+- A new way of advancing models (a new equation family) adds a model trait
+  and a driver that implements `Equation`. Use `prepare_occasion` for label
+  resolution, lag and bioavailability so every family treats doses alike.
+
+Then:
+
+1. Add comprehensive tests comparing with analytical solutions when possible
+2. Include performance benchmarks
+3. Document the mathematical approach and implementation details
+4. Provide example usage in the documentation
 
 ## License
 

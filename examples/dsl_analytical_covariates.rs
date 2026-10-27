@@ -70,11 +70,10 @@ out(cp) = central / v ~ continuous()
     let analytical_parameters = Parameters::with_model(&analytical, values)?;
 
     let jit_predictions = jit_model
-        .estimate_predictions(&subject, &jit_parameters)?
+        .predict(&subject, &jit_parameters)?
         .into_subject()
         .ok_or_else(|| io::Error::other("expected subject predictions"))?;
-    let analytical_predictions =
-        analytical.estimate_predictions(&subject, &analytical_parameters)?;
+    let analytical_predictions = analytical.predict(&subject, &analytical_parameters)?;
 
     println!("t      dsl      analytical!");
     for (jit, analytical) in jit_predictions

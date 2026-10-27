@@ -1,168 +1,229 @@
-use nalgebra::DVector;
-use rand::rng;
-use rand_distr::{Distribution, Normal};
+//! Adaptive Euler-Maruyama integration.
 
-/// Implementation of the Euler-Maruyama method for solving stochastic differential equations.
-///
-/// This structure holds the SDE system parameters and state, providing a numerical method
-/// for approximating solutions to stochastic differential equations with adaptive step size
-/// control for improved accuracy.
-pub struct EM<D, G>
-where
-    D: Fn(f64, &DVector<f64>, &mut DVector<f64>),
-    G: Fn(f64, &DVector<f64>, &mut DVector<f64>),
-{
-    drift: D,
-    diffusion: G,
-    state: DVector<f64>,
-    rtol: f64,
-    atol: f64,
-    max_step: f64,
-    min_step: f64,
+use diffsol::{NalgebraContext, Vector, VectorHost};
+use rand::Rng;
+use rand_distr::{Distribution, StandardNormal};
+
+use crate::simulator::V;
+use crate::PharmsolError;
+
+const RTOL: f64 = 1e-2;
+const ATOL: f64 = 1e-2;
+const MAX_STEP: f64 = 0.1;
+const MIN_STEP: f64 = 1e-6;
+const SAFETY: f64 = 0.9;
+
+/// Buffers for [`advance`], sized to the state.
+pub(crate) struct EmScratch {
+    full_step: V,
+    half_steps: V,
+    drift: V,
+    diffusion: V,
 }
 
-impl<D, G> EM<D, G>
-where
-    D: Fn(f64, &DVector<f64>, &mut DVector<f64>),
-    G: Fn(f64, &DVector<f64>, &mut DVector<f64>),
-{
-    /// Creates a new SDE solver using the Euler-Maruyama method.
-    ///
-    /// # Arguments
-    ///
-    /// * `drift` - Function defining the deterministic component of the SDE
-    /// * `diffusion` - Function defining the stochastic component of the SDE
-    /// * `params` - Vector of model parameters
-    /// * `initial_state` - Initial state vector of the system
-    /// * `cov` - Covariates that may influence the system dynamics
-    /// * `infusions` - Vector of infusion events to be applied during simulation
-    /// * `rtol` - Relative tolerance for adaptive step size control
-    /// * `atol` - Absolute tolerance for adaptive step size control
-    ///
-    /// # Returns
-    ///
-    /// A new instance of the Euler-Maruyama solver configured with the given parameters.
-    pub fn new(drift: D, diffusion: G, initial_state: DVector<f64>, rtol: f64, atol: f64) -> Self {
+impl EmScratch {
+    pub(crate) fn new(nstates: usize) -> Self {
+        let ctx = NalgebraContext::new();
         Self {
+            full_step: V::zeros(nstates, ctx),
+            half_steps: V::zeros(nstates, ctx),
+            drift: V::zeros(nstates, ctx),
+            diffusion: V::zeros(nstates, ctx),
+        }
+    }
+}
+
+/// Advance `x` from `t0` to `tf` with adaptive Euler-Maruyama steps.
+///
+/// Each attempt compares one full step with two half steps and accepts the
+/// half-step result when the scaled difference is at most one. Steps never
+/// cross `tf`, and a step at the minimum size, or one whose error cannot be
+/// measured, is always accepted, so integration always reaches `tf`. A
+/// particle whose state turns NaN stays NaN.
+///
+/// `drift` and `diffusion` write the coefficients at `(t, x)` into their
+/// output, which is zeroed first.
+pub(crate) fn advance<D, G, R>(
+    drift: &mut D,
+    diffusion: &mut G,
+    x: &mut V,
+    t0: f64,
+    tf: f64,
+    rng: &mut R,
+    scratch: &mut EmScratch,
+) -> Result<(), PharmsolError>
+where
+    D: FnMut(f64, &V, &mut V) -> Result<(), PharmsolError>,
+    G: FnMut(f64, &V, &mut V) -> Result<(), PharmsolError>,
+    R: Rng + ?Sized,
+{
+    let EmScratch {
+        full_step,
+        half_steps,
+        drift: drift_term,
+        diffusion: diffusion_term,
+    } = scratch;
+    let mut t = t0;
+    let mut dt = MAX_STEP;
+
+    while t < tf {
+        dt = dt.min(tf - t);
+        let half = dt / 2.0;
+
+        full_step.copy_from(x);
+        let mut terms = (&mut *drift_term, &mut *diffusion_term);
+        step(drift, diffusion, t, dt, full_step, rng, &mut terms)?;
+        half_steps.copy_from(x);
+        step(drift, diffusion, t, half, half_steps, rng, &mut terms)?;
+        step(
             drift,
             diffusion,
-            state: initial_state,
-            rtol,
-            atol,
-            max_step: 0.1,
-            min_step: 1e-6,
+            t + half,
+            half,
+            half_steps,
+            rng,
+            &mut terms,
+        )?;
+
+        let error = scaled_error(x, full_step, half_steps);
+        if error <= 1.0 || dt <= MIN_STEP || error.is_nan() {
+            t += dt;
+            x.copy_from(half_steps);
         }
+        dt = next_step(dt, error);
+    }
+    Ok(())
+}
+
+/// One Euler-Maruyama step of size `dt` from `t`, in place.
+fn step<D, G, R>(
+    drift: &mut D,
+    diffusion: &mut G,
+    t: f64,
+    dt: f64,
+    x: &mut V,
+    rng: &mut R,
+    (drift_term, diffusion_term): &mut (&mut V, &mut V),
+) -> Result<(), PharmsolError>
+where
+    D: FnMut(f64, &V, &mut V) -> Result<(), PharmsolError>,
+    G: FnMut(f64, &V, &mut V) -> Result<(), PharmsolError>,
+    R: Rng + ?Sized,
+{
+    drift_term.fill(0.0);
+    drift(t, x, drift_term)?;
+    diffusion_term.fill(0.0);
+    diffusion(t, x, diffusion_term)?;
+
+    let sqrt_dt = dt.sqrt();
+    let x = x.as_mut_slice();
+    for i in 0..x.len() {
+        let noise: f64 = StandardNormal.sample(rng);
+        x[i] += drift_term[i] * dt + diffusion_term[i] * noise * sqrt_dt;
+    }
+    Ok(())
+}
+
+/// Largest component-wise difference between two approximations, scaled by
+/// the tolerance at the starting state. Components that are NaN in either
+/// approximation are skipped (`f64::max` ignores NaN).
+fn scaled_error(start: &V, full_step: &V, half_steps: &V) -> f64 {
+    let mut error = 0.0f64;
+    for i in 0..start.len() {
+        let tolerance = ATOL + RTOL * start[i].abs();
+        error = error.max((full_step[i] - half_steps[i]).abs() / tolerance);
+    }
+    error
+}
+
+fn next_step(dt: f64, error: f64) -> f64 {
+    (dt * SAFETY * (1.0 / error).powf(0.5)).clamp(MIN_STEP, MAX_STEP)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
+
+    fn decay(_t: f64, x: &V, dx: &mut V) -> Result<(), PharmsolError> {
+        dx[0] = -x[0];
+        Ok(())
     }
 
-    /// Calculates the error between two approximations for adaptive step size control.
-    ///
-    /// # Arguments
-    ///
-    /// * `y1` - First approximation of the solution
-    /// * `y2` - Second approximation of the solution (typically more accurate)
-    ///
-    /// # Returns
-    ///
-    /// The maximum normalized error between the two approximations.
-    fn calculate_error(&self, y1: &DVector<f64>, y2: &DVector<f64>) -> f64 {
-        let n = y1.len();
-        let mut err = 0.0f64;
-
-        for i in 0..n {
-            let tol = self.atol + self.rtol * self.state[i].abs();
-            let e = (y1[i] - y2[i]).abs() / tol;
-            err = err.max(e);
-        }
-        err
+    fn no_noise(_t: f64, _x: &V, _sigma: &mut V) -> Result<(), PharmsolError> {
+        Ok(())
     }
 
-    /// Computes a new step size based on the current error.
-    ///
-    /// # Arguments
-    ///
-    /// * `dt` - Current step size
-    /// * `error` - Current error estimate
-    /// * `safety` - Safety factor to prevent overly aggressive step size changes
-    ///
-    /// # Returns
-    ///
-    /// The adjusted step size for the next iteration.
-    fn compute_new_step(&self, dt: f64, error: f64, safety: f64) -> f64 {
-        let mut new_dt = dt * safety * (1.0 / error).powf(0.5);
-        new_dt = new_dt.clamp(self.min_step, self.max_step);
-        new_dt
+    #[test]
+    fn short_intervals_stop_at_the_end_time() {
+        let mut x = V::from_vec(vec![1.0], NalgebraContext::new());
+        let mut scratch = EmScratch::new(1);
+        let mut rng = StdRng::seed_from_u64(0);
+        advance(
+            &mut decay,
+            &mut no_noise,
+            &mut x,
+            0.0,
+            0.01,
+            &mut rng,
+            &mut scratch,
+        )
+        .unwrap();
+        // One clamped Euler step of 0.01 (two halves of 0.005).
+        let expected = (1.0 - 0.005) * (1.0 - 0.005);
+        assert!((x[0] - expected).abs() < 1e-12, "{}", x[0]);
     }
 
-    /// Performs a single Euler-Maruyama integration step.
-    ///
-    /// # Arguments
-    ///
-    /// * `time` - Current simulation time
-    /// * `dt` - Step size
-    /// * `state` - Current state of the system (modified in-place)
-    fn euler_maruyama_step(&self, time: f64, dt: f64, state: &mut DVector<f64>) {
-        let n = state.len();
-        let mut drift_term = DVector::zeros(n);
-        (self.drift)(time, state, &mut drift_term);
-
-        let mut diffusion_term = DVector::zeros(n);
-        (self.diffusion)(time, state, &mut diffusion_term);
-
-        let mut rng = rng();
-        let normal_dist = Normal::new(0.0, 1.0).unwrap();
-
-        for i in 0..n {
-            state[i] +=
-                drift_term[i] * dt + diffusion_term[i] * normal_dist.sample(&mut rng) * dt.sqrt();
-        }
+    #[test]
+    fn errors_from_the_model_propagate() {
+        let mut x = V::from_vec(vec![1.0], NalgebraContext::new());
+        let mut scratch = EmScratch::new(1);
+        let mut rng = StdRng::seed_from_u64(0);
+        let mut failing =
+            |_t: f64, _x: &V, _dx: &mut V| Err(PharmsolError::OtherError("drift".into()));
+        let result = advance(
+            &mut failing,
+            &mut no_noise,
+            &mut x,
+            0.0,
+            1.0,
+            &mut rng,
+            &mut scratch,
+        );
+        assert!(result.is_err());
     }
+}
 
-    /// Solves the SDE system over the specified time interval.
-    ///
-    /// Uses adaptive step size control to balance accuracy and performance.
-    ///
-    /// # Arguments
-    ///
-    /// * `t0` - Starting time
-    /// * `tf` - Ending time
-    ///
-    /// # Returns
-    ///
-    /// A tuple containing:
-    /// * Vector of time points where solutions were computed
-    /// * Vector of state vectors corresponding to each time point
-    pub fn solve(&mut self, t0: f64, tf: f64) -> (Vec<f64>, Vec<DVector<f64>>) {
-        let mut t = t0;
-        let mut dt = self.max_step;
-        let safety = 0.9;
-        let mut times = vec![t0];
-        let mut solution = vec![self.state.clone()];
+#[cfg(test)]
+mod divergence {
+    use super::*;
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
 
-        while t < tf {
-            let mut y1 = self.state.clone();
-            let mut y2 = self.state.clone();
-
-            // Single step
-            self.euler_maruyama_step(t, dt, &mut y1);
-
-            // Two half steps
-            self.euler_maruyama_step(t, dt / 2.0, &mut y2);
-            self.euler_maruyama_step(t + dt / 2.0, dt / 2.0, &mut y2);
-
-            let error = self.calculate_error(&y1, &y2);
-
-            if error <= 1.0 {
-                t += dt;
-                self.state = y2; // Use more accurate solution
-                times.push(t);
-                solution.push(self.state.clone());
-                dt = self.compute_new_step(dt, error, safety);
-                dt = dt.min(tf - t); // Don't step beyond tf
-            } else {
-                dt = self.compute_new_step(dt, error, safety);
-            }
-        }
-
-        (times, solution)
+    #[test]
+    fn diverging_particles_still_reach_the_end_time() {
+        let mut x = V::from_vec(vec![1.0, 2.0], NalgebraContext::new());
+        let mut scratch = EmScratch::new(2);
+        let mut rng = StdRng::seed_from_u64(0);
+        let mut nan = |_t: f64, _x: &V, dx: &mut V| {
+            dx[0] = f64::NAN;
+            Ok(())
+        };
+        let mut inf_sigma = |_t: f64, _x: &V, s: &mut V| {
+            s[1] = f64::INFINITY;
+            Ok(())
+        };
+        advance(
+            &mut nan,
+            &mut inf_sigma,
+            &mut x,
+            0.0,
+            5.0,
+            &mut rng,
+            &mut scratch,
+        )
+        .unwrap();
+        assert!(x[0].is_nan());
     }
 }

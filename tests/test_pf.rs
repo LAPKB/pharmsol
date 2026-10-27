@@ -66,7 +66,7 @@ fn test_particle_filter_likelihood() {
         let parameters = Parameters::with_model(&sde, [("ke0", 1.0)])
             .expect("particle filter parameters should validate");
         let ll = sde
-            .estimate_log_likelihood(&subject, &parameters, &ems)
+            .log_likelihood(&subject, &parameters, &ems)
             .unwrap()
             .exp();
         println!("Run {}: likelihood = {}", i + 1, ll);

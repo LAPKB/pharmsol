@@ -157,11 +157,11 @@ fn assert_ode_matches_analytical(
     let ode_params = parameters_for_ode(label, ode, param_names, params);
 
     let analytical_predictions = analytical
-        .estimate_predictions(subject, &analytical_params)
+        .predict(subject, &analytical_params)
         .expect("analytical predictions should succeed");
 
     let ode_predictions = ode
-        .estimate_predictions(subject, &ode_params)
+        .predict(subject, &ode_params)
         .expect("ode predictions should succeed");
 
     let expected = analytical_predictions.flat_predictions();
@@ -1066,7 +1066,7 @@ fn time_varying_covariates_work_correctly() {
     // Just verify it runs without error and produces reasonable output
     let parameters =
         parameters_for_ode("time_varying_covariates", &ode, &["ke", "v"], &[0.1, 50.0]);
-    let result = ode.estimate_predictions(&subject, &parameters);
+    let result = ode.predict(&subject, &parameters);
     assert!(result.is_ok(), "ODE with covariates should succeed");
 
     let predictions = result.unwrap();
@@ -1162,12 +1162,12 @@ fn likelihood_calculation_matches_analytical() {
     let ode_params = parameters_for_ode("likelihood_calculation", &ode, &["ke", "v"], &[0.1, 50.0]);
 
     let ll_analytical = analytical
-        .estimate_log_likelihood(&subject, &analytical_params, &error_models)
+        .log_likelihood(&subject, &analytical_params, &error_models)
         .expect("analytical likelihood")
         .exp();
 
     let ll_ode = ode
-        .estimate_log_likelihood(&subject, &ode_params, &error_models)
+        .log_likelihood(&subject, &ode_params, &error_models)
         .expect("ode likelihood")
         .exp();
 

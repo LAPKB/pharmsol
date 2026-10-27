@@ -34,7 +34,7 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
 
     let parameters =
         Parameters::with_model(&analytical, [("ka", 1.2), ("ke0", 0.08), ("v", 194.0)])?;
-    let predictions = analytical.estimate_predictions(&subject, &parameters)?;
+    let predictions = analytical.predict(&subject, &parameters)?;
 
     println!("times => {:?}", predictions.flat_times());
     println!("predictions => {:?}", predictions.flat_predictions());

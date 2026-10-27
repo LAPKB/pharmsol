@@ -102,8 +102,8 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
         [("ke", 0.1), ("kcp", 0.05), ("kpc", 0.03), ("v", 50.0)],
     )
     .expect("valid named parameters");
-    let macro_predictions = macro_ode.estimate_predictions(&subject, &params)?;
-    let handwritten_predictions = handwritten_ode.estimate_predictions(&subject, &params)?;
+    let macro_predictions = macro_ode.predict(&subject, &params)?;
+    let handwritten_predictions = handwritten_ode.predict(&subject, &params)?;
 
     let macro_flat = macro_predictions.flat_predictions();
     let handwritten_flat = handwritten_predictions.flat_predictions();

@@ -81,7 +81,7 @@ fn main() {
     // ── Run all solvers and collect results ───────────────────────
     let mut rows: Vec<(&str, u128, Vec<f64>)> = Vec::new();
     for (name, ode) in &results {
-        let (preds, us) = timed(|| ode.estimate_predictions(&subject, &parameters).unwrap());
+        let (preds, us) = timed(|| ode.predict(&subject, &parameters).unwrap());
         let preds: Vec<f64> = preds.flat_predictions().to_vec();
         rows.push((name, us, preds));
     }

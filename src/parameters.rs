@@ -318,7 +318,7 @@ mod tests {
         let subject = simple_subject();
 
         let parameters = Parameters::with_model(&ode, [("ke", 0.5), ("v", 10.0)]).unwrap();
-        let predictions = ode.estimate_predictions(&subject, &parameters).unwrap();
+        let predictions = ode.predict(&subject, &parameters).unwrap();
 
         assert_eq!(parameters.as_slice(), &[10.0, 0.5]);
         assert_eq!(predictions.predictions().len(), 1);

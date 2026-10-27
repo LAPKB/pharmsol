@@ -37,7 +37,7 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
 
     let parameters = Parameters::with_model(&sde, [("ke", 1.022), ("sigma_ke", 0.0), ("v", 194.0)])
         .expect("valid named parameters");
-    let predictions = sde.estimate_predictions(&subject, &parameters)?;
+    let predictions = sde.predict(&subject, &parameters)?;
 
     println!("first prediction => {}", predictions[[0, 0]].prediction());
     println!("prediction grid shape => {:?}", predictions.dim());

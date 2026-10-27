@@ -97,7 +97,7 @@ pub fn reference_values() -> Result<Vec<f64>, Box<dyn Error>> {
         Parameters::with_model(&model, [("ke", SUPPORT_POINT[0]), ("v", SUPPORT_POINT[1])])
             .expect("bimodal_ke parameters should validate");
 
-    let predictions = model.estimate_predictions(&subject(), &parameters)?;
+    let predictions = model.predict(&subject(), &parameters)?;
 
     Ok(predictions.flat_predictions())
 }
@@ -161,7 +161,7 @@ pub fn report_runtime_model(
     let support =
         Parameters::with_model(model, [("ke", SUPPORT_POINT[0]), ("v", SUPPORT_POINT[1])])?;
     let predictions = model
-        .estimate_predictions(&subject_for_runtime_model(model), &support)?
+        .predict(&subject_for_runtime_model(model), &support)?
         .into_subject()
         .ok_or_else(|| io::Error::other(format!("{label}: expected subject predictions")))?;
 

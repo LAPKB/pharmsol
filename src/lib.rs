@@ -49,7 +49,7 @@
 //!
 //! let parameters = Parameters::with_model(&model, [("ke", 1.022), ("v", 194.0)])
 //!     .expect("valid named parameters");
-//! let predictions = model.estimate_predictions(&subject, &parameters)?;
+//! let predictions = model.predict(&subject, &parameters)?;
 //! assert_eq!(predictions.flat_predictions().len(), 2);
 //! # Ok::<(), pharmsol::PharmsolError>(())
 //! ```
@@ -130,7 +130,7 @@ pub use crate::simulator::equation::{
     self,
     ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
     Analytical, AnalyticalKernel, Cache, Equation, ModelKind, ModelMetadata, ModelMetadataError,
-    NameDomain, Predictions, RouteInputPolicy, RouteKind, State, ValidatedModelMetadata, ODE, SDE,
+    NameDomain, Predictions, RouteInputPolicy, RouteKind, ValidatedModelMetadata, ODE, SDE,
 };
 pub use error::PharmsolError;
 pub use nalgebra::dmatrix;

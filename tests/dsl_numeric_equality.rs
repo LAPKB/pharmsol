@@ -30,7 +30,7 @@ fn output_value(model: &CompiledRuntimeModel, drug: f64, output: &str) -> f64 {
         .build();
 
     model
-        .estimate_predictions(&subject, &parameters)
+        .predict(&subject, &parameters)
         .expect("predictions succeed")
         .into_subject()
         .expect("ODE predictions are subject predictions")

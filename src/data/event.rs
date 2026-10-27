@@ -300,6 +300,15 @@ impl PartialEq<&OutputLabel> for usize {
     }
 }
 
+/// How events that share a time are ordered: observations first (they see
+/// the state before any dose at that time), then boluses, then infusions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum SameTimeOrder {
+    Observation,
+    Bolus,
+    Infusion,
+}
+
 impl Event {
     /// Get the time of the event
     pub fn time(&self) -> f64 {
@@ -312,17 +321,15 @@ impl Event {
 
     /// Compare events by time, with observations before doses at equal times.
     pub(crate) fn cmp_time_then_type(&self, other: &Self) -> std::cmp::Ordering {
-        fn rank(event: &Event) -> u8 {
-            match event {
-                Event::Observation(_) => 0,
-                Event::Bolus(_) => 1,
-                Event::Infusion(_) => 2,
-            }
-        }
+        let order = |event: &Event| match event {
+            Event::Observation(_) => SameTimeOrder::Observation,
+            Event::Bolus(_) => SameTimeOrder::Bolus,
+            Event::Infusion(_) => SameTimeOrder::Infusion,
+        };
 
         self.time()
             .total_cmp(&other.time())
-            .then_with(|| rank(self).cmp(&rank(other)))
+            .then_with(|| order(self).cmp(&order(other)))
     }
 
     /// Increment the event time by a specified delta
@@ -601,10 +608,6 @@ pub struct Observation {
     errorpoly: Option<ErrorPoly>,
     occasion: usize,
     censoring: Censor,
-    /// Output slot `outeq` resolves to in the equation being simulated. Set
-    /// by the simulator next to the label, which it never rewrites.
-    #[serde(skip)]
-    outeq_slot: Option<usize>,
 }
 impl Observation {
     /// Create a new observation
@@ -632,7 +635,6 @@ impl Observation {
             errorpoly,
             occasion,
             censoring,
-            outeq_slot: None,
         }
     }
 
@@ -680,17 +682,6 @@ impl Observation {
     /// Set the output label corresponding to this observation
     pub fn set_outeq(&mut self, outeq: impl ToString) {
         self.outeq = OutputLabel::new(outeq);
-        self.outeq_slot = None;
-    }
-
-    /// The output slot the simulator resolved this observation's label to.
-    pub(crate) fn outeq_slot(&self) -> Option<usize> {
-        self.outeq_slot
-    }
-
-    /// Record the output slot this observation's label resolves to.
-    pub(crate) fn set_outeq_slot(&mut self, slot: usize) {
-        self.outeq_slot = Some(slot);
     }
 
     /// Set the [ErrorPoly] for this observation
@@ -710,7 +701,6 @@ impl Observation {
 
     /// Get a mutable reference to the output label
     pub fn mut_outeq(&mut self) -> &mut OutputLabel {
-        self.outeq_slot = None;
         &mut self.outeq
     }
 

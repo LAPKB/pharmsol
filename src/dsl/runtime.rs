@@ -12,7 +12,7 @@
 //!   path.
 //! - [`compile_execution_model_to_runtime`] when you already have an
 //!   [`ExecutionModel`](pharmsol_dsl::ExecutionModel).
-//! - [`CompiledRuntimeModel::estimate_predictions`] for kind-agnostic
+//! - [`CompiledRuntimeModel::predict`] for kind-agnostic
 //!   execution against a [`Subject`](crate::Subject).
 //!
 //! Smallest compile-and-run example:
@@ -48,7 +48,7 @@
 //!
 //! let parameters = Parameters::with_model(&model, [("ke", 1.2), ("v", 50.0)])
 //!     .expect("valid named parameters");
-//! let predictions = model.estimate_predictions(&subject, &parameters)?;
+//! let predictions = model.predict(&subject, &parameters)?;
 //! assert!(predictions.as_subject().is_some());
 //! # Ok::<(), pharmsol::dsl::RuntimeError>(())
 //! ```
@@ -58,12 +58,12 @@ use std::fmt;
 use ndarray::Array2;
 use thiserror::Error;
 
-use super::backend::{RuntimeAnalyticalModel, RuntimeOdeModel, RuntimeSdeModel};
 use super::jit::{compile_execution_model_to_jit, JitCompileError};
+use super::model::{RuntimeAnalyticalModel, RuntimeOdeModel, RuntimeSdeModel};
 use super::model_info::RuntimeModelInfo;
 use crate::{
     simulator::likelihood::{Prediction, SubjectPredictions},
-    Parameters, PharmsolError, Subject, ValidatedModelMetadata,
+    Equation, Parameters, PharmsolError, Subject, ValidatedModelMetadata,
 };
 use pharmsol_dsl::{
     analyze_module, compile_analyzed_model, parse_module, AnalysisError, CompileError, Diagnostic,
@@ -142,21 +142,17 @@ impl CompiledRuntimeModel {
         }
     }
 
-    pub fn estimate_predictions(
+    pub fn predict(
         &self,
         subject: &Subject,
         parameters: &Parameters,
     ) -> Result<RuntimePredictions, RuntimeError> {
         Ok(match self {
-            Self::Ode(model) => {
-                RuntimePredictions::Subject(model.estimate_predictions(subject, parameters)?)
-            }
+            Self::Ode(model) => RuntimePredictions::Subject(model.predict(subject, parameters)?),
             Self::Analytical(model) => {
-                RuntimePredictions::Subject(model.estimate_predictions(subject, parameters)?)
+                RuntimePredictions::Subject(model.predict(subject, parameters)?)
             }
-            Self::Sde(model) => {
-                RuntimePredictions::Particles(model.estimate_predictions(subject, parameters)?)
-            }
+            Self::Sde(model) => RuntimePredictions::Particles(model.predict(subject, parameters)?),
         })
     }
 }
@@ -478,7 +474,7 @@ out(cp) = central / v ~ continuous()
         expected_label: &str,
     ) {
         let error = model
-            .estimate_predictions(subject, support)
+            .predict(subject, support)
             .expect_err("undeclared numeric output label should fail");
 
         assert!(matches!(
@@ -494,7 +490,7 @@ out(cp) = central / v ~ continuous()
         expected_label: &str,
     ) {
         let error = model
-            .estimate_predictions(subject, support)
+            .predict(subject, support)
             .expect_err("undeclared numeric input label should fail");
 
         assert!(matches!(
@@ -511,7 +507,7 @@ out(cp) = central / v ~ continuous()
         expected_kind: RouteKind,
     ) {
         let error = model
-            .estimate_predictions(subject, support)
+            .predict(subject, support)
             .expect_err("mismatched route kind should fail");
 
         match error {
@@ -549,10 +545,7 @@ out(cp) = central / v ~ continuous()
         assert_eq!(compiled_output_slot_index(&jit, "cp"), Some(0));
         let subject = ode_subject();
 
-        let jit_values = subject_values(
-            &jit.estimate_predictions(&subject, &support)
-                .expect("jit predictions"),
-        );
+        let jit_values = subject_values(&jit.predict(&subject, &support).expect("jit predictions"));
         assert_eq!(jit_values.len(), 6);
         assert!(jit_values.iter().all(|value| value.is_finite()));
     }
@@ -613,13 +606,13 @@ out(cp) = central / v ~ continuous()
             .missing_observation(1.0, "cp")
             .build();
 
-        jit.estimate_predictions(&natural_bolus, &support)
+        jit.predict(&natural_bolus, &support)
             .expect("bolus oral resolves on kindless route");
-        jit.estimate_predictions(&natural_infusion, &support)
+        jit.predict(&natural_infusion, &support)
             .expect("infusion iv resolves on kindless route");
-        jit.estimate_predictions(&cross_bolus, &support)
+        jit.predict(&cross_bolus, &support)
             .expect("bolus iv resolves on kindless route");
-        jit.estimate_predictions(&cross_infusion, &support)
+        jit.predict(&cross_infusion, &support)
             .expect("infusion oral resolves on kindless route");
     }
 
@@ -684,10 +677,7 @@ out(cp) = central / v ~ continuous()
 
         let subject = numeric_route_subject();
 
-        let values = subject_values(
-            &jit.estimate_predictions(&subject, &support)
-                .expect("jit predictions"),
-        );
+        let values = subject_values(&jit.predict(&subject, &support).expect("jit predictions"));
         assert!(values.iter().all(|value| value.is_finite()));
     }
 
@@ -714,10 +704,7 @@ out(cp) = central / v ~ continuous()
 
         let subject = shared_numeric_route_output_subject();
 
-        let values = subject_values(
-            &jit.estimate_predictions(&subject, &support)
-                .expect("jit predictions"),
-        );
+        let values = subject_values(&jit.predict(&subject, &support).expect("jit predictions"));
         assert!(values.iter().all(|value| value.is_finite()));
     }
 

@@ -86,7 +86,7 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
         .expect("valid named parameters");
 
     // Compute predictions
-    let predictions = ode.estimate_predictions(&subject, &params)?;
+    let predictions = ode.predict(&subject, &params)?;
 
     // Print results in a formatted table
     println!("\n╔════════════════════════════════════════════════════════════╗");
