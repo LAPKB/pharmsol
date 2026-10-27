@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use diffsol::{
     error::OdeSolverError, ode_solver::method::OdeSolverMethod, NalgebraContext, NalgebraLU,
-    OdeBuilder, OdeSolverConfig, OdeSolverStopReason, Vector, VectorHost,
+    OdeBuilder, OdeSolverConfig, OdeSolverStopReason, Vector,
 };
 
 use crate::{
@@ -302,7 +302,7 @@ impl<M: OdeModel> ODE<M> {
             .rtol(self.rtol)
             .t0(0.0)
             .h0(1e-3)
-            .p(p.as_slice().to_vec())
+            .p(p.batch_as_slice(0).to_vec())
             .build_from_eqn(PMProblem::with_params_v(
                 rhs,
                 self.model.nstates(),
@@ -405,10 +405,10 @@ impl<M: OdeModel> ODE<M> {
                         &scratch.rates,
                         &mut scratch.y,
                     )?;
-                    output.add_prediction(
-                        observation
-                            .to_prediction(scratch.y[outeq], solver.state().y.as_slice().to_vec()),
-                    );
+                    output.add_prediction(observation.to_prediction(
+                        scratch.y[outeq],
+                        solver.state().y.batch_as_slice(0).to_vec(),
+                    ));
                 }
             }
 

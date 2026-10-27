@@ -432,11 +432,11 @@ fn assert_pm_wrapper_matches_native(
     let compact_rateiv = V::from_vec(compact_rateiv, NalgebraContext::new());
 
     let mut padded_x = vec![1234.0];
-    padded_x.extend(compact_x.as_slice().iter().copied());
+    padded_x.extend(compact_x.batch_as_slice(0).iter().copied());
     let padded_x = V::from_vec(padded_x, NalgebraContext::new());
 
     let mut padded_rateiv = vec![5678.0];
-    padded_rateiv.extend(compact_rateiv.as_slice().iter().copied());
+    padded_rateiv.extend(compact_rateiv.batch_as_slice(0).iter().copied());
     let padded_rateiv = V::from_vec(padded_rateiv, NalgebraContext::new());
 
     let native_output = native(&compact_x, &params, 1.5, &compact_rateiv, &covariates);
@@ -446,10 +446,10 @@ fn assert_pm_wrapper_matches_native(
     assert_eq!(wrapped_output.len(), native_output.len() + 1);
 
     for (wrapped, native) in wrapped_output
-        .as_slice()
+        .batch_as_slice(0)
         .iter()
         .skip(1)
-        .zip(native_output.as_slice().iter())
+        .zip(native_output.batch_as_slice(0).iter())
     {
         assert_relative_eq!(*wrapped, *native, max_relative = 1e-10, epsilon = 1e-10);
     }

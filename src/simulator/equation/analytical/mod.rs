@@ -23,7 +23,7 @@ pub use two_compartment_models::*;
 
 use std::sync::Arc;
 
-use diffsol::{NalgebraContext, Vector, VectorHost};
+use diffsol::{NalgebraContext, Vector};
 use pharmsol_dsl::AnalyticalKernel;
 
 use super::model::{
@@ -182,7 +182,7 @@ impl<M: AnalyticalModel> Analytical<M> {
                         &mut scratch.y,
                     )?;
                     output.add_prediction(
-                        observation.to_prediction(scratch.y[outeq], x.as_slice().to_vec()),
+                        observation.to_prediction(scratch.y[outeq], x.batch_as_slice(0).to_vec()),
                     );
                 }
             }
@@ -254,7 +254,7 @@ impl<M: AnalyticalModel> Analytical<M> {
 
 /// Fill `rates` with the infusions that run for the whole segment `[from, to]`.
 fn fill_segment_rates(infusions: &[InfusionDose], from: f64, to: f64, rates: &mut V) {
-    let rates = rates.as_mut_slice();
+    let rates = rates.batch_as_mut_slice(0);
     rates.fill(0.0);
     for infusion in infusions {
         if from >= infusion.time && to <= infusion.end() {
@@ -366,7 +366,7 @@ pub fn kernel_function(kernel: AnalyticalKernel) -> AnalyticalEq {
 #[inline(always)]
 pub(crate) fn compact_public_vector(vector: &V) -> V {
     V::from_vec(
-        vector.as_slice().get(1..).unwrap_or(&[]).to_vec(),
+        vector.batch_as_slice(0).get(1..).unwrap_or(&[]).to_vec(),
         NalgebraContext::new(),
     )
 }
@@ -375,7 +375,7 @@ pub(crate) fn compact_public_vector(vector: &V) -> V {
 pub(crate) fn pad_public_vector(vector: &V) -> V {
     let mut padded = Vec::with_capacity(vector.len() + 1);
     padded.push(0.0);
-    padded.extend(vector.as_slice().iter().copied());
+    padded.extend(vector.batch_as_slice(0).iter().copied());
     V::from_vec(padded, NalgebraContext::new())
 }
 

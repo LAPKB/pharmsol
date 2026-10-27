@@ -15,7 +15,7 @@ mod native;
 
 pub use native::NativeSde;
 
-use diffsol::{NalgebraContext, Vector, VectorHost};
+use diffsol::{NalgebraContext, Vector};
 use ndarray::Array2;
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
@@ -218,7 +218,8 @@ impl<M: SdeModel> SDE<M> {
                             &mut y,
                         )?;
                         run.predictions.push(
-                            observation.to_prediction(y[outeq], particle.as_slice().to_vec()),
+                            observation
+                                .to_prediction(y[outeq], particle.batch_as_slice(0).to_vec()),
                         );
                     }
 
