@@ -1,6 +1,5 @@
 use crate::{data::Covariates, simulator::*};
-use diffsol::VectorCommon;
-use nalgebra::{DVector, Matrix2, Vector2};
+use nalgebra::{Matrix2, Vector2};
 
 use super::wrap_pmetrics_analytical;
 
@@ -32,7 +31,7 @@ pub fn two_compartments(x: &V, p: &V, t: T, rateiv: &V, _cov: &Covariates) -> V 
         (l1 - ke - kcp) * exp_l1_t + (ke + kcp - l2) * exp_l2_t,
     );
 
-    let non_zero = (non_zero_matrix * x.inner()) / (l1 - l2);
+    let non_zero = (non_zero_matrix * Vector2::new(x[0], x[1])) / (l1 - l2);
 
     let infusion_vector = Vector2::new(
         ((l1 - kpc) / l1) * (1.0 - exp_l1_t) + ((kpc - l2) / l2) * (1.0 - exp_l2_t),
@@ -43,8 +42,11 @@ pub fn two_compartments(x: &V, p: &V, t: T, rateiv: &V, _cov: &Covariates) -> V 
 
     let result_vector = non_zero + infusion;
 
-    // Convert Vector2 to DVector
-    DVector::from_vec(vec![result_vector[0], result_vector[1]]).into()
+    let mut xout = x.clone();
+    xout[0] = result_vector[0];
+    xout[1] = result_vector[1];
+
+    xout
 }
 
 pub fn pm_two_compartments(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -> V {
