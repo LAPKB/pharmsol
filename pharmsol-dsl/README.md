@@ -100,12 +100,58 @@ starts on; otherwise it starts a new statement. That way, a dangling operator
 or an unclosed `(` is reported on its own line instead of absorbing the next
 statement. The same rules apply inside `if` bodies.
 
+## Built-in functions
+
+Mathematical functions take numeric arguments, return real values (`abs`,
+`min`, and `max` keep integer arguments integer), and fold to constants when
+every argument is constant:
+
+- `abs`, `ceil`, `floor`, `round`, `exp`, `ln` (alias `log`), `log10`,
+  `log2`, `sqrt`, `sin`, `cos`, `tan`, `tanh` take one argument, `x`.
+- `min(a, b)`, `max(a, b)`, and `pow(base, exponent)` take two.
+- `logit(p)` is `ln(p / (1 - p))`, and `sigmoid(x, k = 1)` is
+  `1 / (1 + exp(-k * x))`, its inverse when `k = 1`. `sigmoid(t - t0, k)` is a
+  smooth switch at `t0` that avoids the discontinuity of an `if`, which the ODE
+  solvers handle poorly.
+- `ifelse(test, yes, no)` returns `yes` when the boolean `test` is true and
+  `no` otherwise, so a value can be chosen inside an expression. Both branches
+  are evaluated.
+- `effect50(min, max, e50, h, x)` is the sigmoid Emax (Hill) model
+  `min + (max - min) * x^h / (e50^h + x^h)`. It returns `min` at `x = 0` and
+  the midpoint of `min` and `max` at `x = e50`; any `x <= 0` returns `min`.
+  `x` is required, and the others default to `min = 0`, `max = 1`,
+  `e50 = 0.5`, and `h = 1`.
+
+Arguments can be passed by position, by parameter name, or both, with
+positional arguments first. Named arguments may come in any order, and
+omitted ones take their default:
+
+```text
+out(effect) = effect50(x = central / v, e50 = ec50, h = gamma)
+out(effect) = effect50(e0, emax, x = central / v, e50 = ec50)
+```
+
+Function names are reserved and cannot name parameters, states, or other
+symbols.
+
+### Adding a built-in function
+
+Each function is described once by its `FunctionSignature` (name, parameters
+with optional defaults, and result type), which drives name lookup, reserved
+names, argument binding, and error messages. To add a math function, add a
+`MathFunction` variant, its signature (marking any boolean parameter with
+`FunctionParam::condition`), and its `MathFunction::evaluate` arm;
+the main `pharmsol` crate then needs only the host function for its JIT, and a
+test checks the JIT against `evaluate` for every function.
+
 ## Runtime-only utility functions
 
 The DSL supports the same effect functions as the Rust API:
 
 - `estimate_effect_2(u, v, alpha, h1, h2)` takes five numeric arguments.
 - `estimate_effect_3(a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3)` takes ten numeric arguments.
+
+Both accept named arguments, and none of their arguments are optional.
 
 These functions calculate a combined effect using supplied interaction
 coefficients; they do not fit those coefficients. Both return real values.

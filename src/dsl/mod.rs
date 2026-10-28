@@ -63,6 +63,11 @@
 //! # Ok::<(), pharmsol::dsl::RuntimeError>(())
 //! ```
 //!
+//! The sigmoid Emax model `effect50(min, max, e50, h, x)` is an ordinary math
+//! intrinsic: it constant-folds and JIT kernels call [`crate::effect50`]. All
+//! arguments but `x` have defaults (`0, 1, 0.5, 1`) and, like those of every
+//! built-in, can be passed by name, as in `effect50(x = central / v, e50 = ec50)`.
+//!
 //! Runtime-only pharmacometric calls use the same backend-neutral path. The
 //! DSL supports five-argument `estimate_effect_2(u, v, alpha, h1, h2)` and ten-argument
 //! `estimate_effect_3(a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3)`. JIT

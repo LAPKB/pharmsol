@@ -660,6 +660,152 @@ pub enum AnalyzedCall {
     Rate(SymbolId),
 }
 
+/// One parameter of a built-in DSL function.
+///
+/// Calls fill parameters by position or by name (`effect50(x = cp)`); a
+/// parameter with a `default` may be omitted.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FunctionParam {
+    pub name: &'static str,
+    pub kind: ParamKind,
+    /// Value used when a call omits this argument; `None` makes it required.
+    pub default: Option<f64>,
+}
+
+/// The type of value a parameter accepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamKind {
+    /// `int` or `real`.
+    Numeric,
+    /// `bool`, such as a comparison.
+    Bool,
+}
+
+impl FunctionParam {
+    pub const fn required(name: &'static str) -> Self {
+        Self {
+            name,
+            kind: ParamKind::Numeric,
+            default: None,
+        }
+    }
+
+    pub const fn optional(name: &'static str, default: f64) -> Self {
+        Self {
+            name,
+            kind: ParamKind::Numeric,
+            default: Some(default),
+        }
+    }
+
+    pub const fn condition(name: &'static str) -> Self {
+        Self {
+            name,
+            kind: ParamKind::Bool,
+            default: None,
+        }
+    }
+}
+
+/// How the result type of a built-in function follows from its arguments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReturnType {
+    /// Always `real`.
+    Real,
+    /// The promoted type of the numeric arguments: `int` when every one is
+    /// `int`.
+    PromotedArgs,
+}
+
+/// Name, parameters, and result type of a built-in DSL function.
+///
+/// This is the single description of a function that analysis uses for name
+/// lookup, reserved names, argument binding, and result types.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FunctionSignature {
+    pub name: &'static str,
+    pub params: &'static [FunctionParam],
+    pub returns: ReturnType,
+}
+
+impl FunctionSignature {
+    pub fn argument_count(&self) -> ArgumentCount {
+        let max = self.params.len();
+        let min = self
+            .params
+            .iter()
+            .filter(|param| param.default.is_none())
+            .count();
+        if min == max {
+            ArgumentCount::Exact(max)
+        } else {
+            ArgumentCount::Range { min, max }
+        }
+    }
+
+    pub fn param_index(&self, name: &str) -> Option<usize> {
+        self.params.iter().position(|param| param.name == name)
+    }
+
+    /// Help text listing the parameters and their defaults, e.g.
+    /// ``"`pow` takes (base, exponent)"``.
+    pub fn usage(&self) -> String {
+        let params = self
+            .params
+            .iter()
+            .map(|param| match param.default {
+                Some(default) => format!("{} = {default}", param.name),
+                None => param.name.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("`{}` takes ({params})", self.name)
+    }
+}
+
+const X: &[FunctionParam] = &[FunctionParam::required("x")];
+const AB: &[FunctionParam] = &[FunctionParam::required("a"), FunctionParam::required("b")];
+const ESTIMATE_EFFECT_2_PARAMS: &[FunctionParam] = &[
+    FunctionParam::required("u"),
+    FunctionParam::required("v"),
+    FunctionParam::required("alpha"),
+    FunctionParam::required("h1"),
+    FunctionParam::required("h2"),
+];
+const ESTIMATE_EFFECT_3_PARAMS: &[FunctionParam] = &[
+    FunctionParam::required("a"),
+    FunctionParam::required("b"),
+    FunctionParam::required("c"),
+    FunctionParam::required("alpha12"),
+    FunctionParam::required("alpha13"),
+    FunctionParam::required("alpha23"),
+    FunctionParam::required("alpha123"),
+    FunctionParam::required("h1"),
+    FunctionParam::required("h2"),
+    FunctionParam::required("h3"),
+];
+const POW_PARAMS: &[FunctionParam] = &[
+    FunctionParam::required("base"),
+    FunctionParam::required("exponent"),
+];
+const SIGMOID_PARAMS: &[FunctionParam] = &[
+    FunctionParam::required("x"),
+    FunctionParam::optional("k", 1.0),
+];
+const LOGIT_PARAMS: &[FunctionParam] = &[FunctionParam::required("p")];
+const IFELSE_PARAMS: &[FunctionParam] = &[
+    FunctionParam::condition("test"),
+    FunctionParam::required("yes"),
+    FunctionParam::required("no"),
+];
+const EFFECT50_PARAMS: &[FunctionParam] = &[
+    FunctionParam::optional("min", 0.0),
+    FunctionParam::optional("max", 1.0),
+    FunctionParam::optional("e50", 0.5),
+    FunctionParam::optional("h", 1.0),
+    FunctionParam::required("x"),
+];
+
 /// Runtime-only utility functions provided by the main `pharmsol`
 /// crate. These calls are represented separately from inexpensive mathematical
 /// intrinsics so compiler-only consumers cannot accidentally evaluate them.
@@ -672,26 +818,33 @@ pub enum UtilityFunctions {
 impl UtilityFunctions {
     pub const ALL: [Self; 2] = [Self::EstimateEffect2, Self::EstimateEffect3];
 
-    pub const fn name(self) -> &'static str {
+    pub const fn signature(self) -> &'static FunctionSignature {
         match self {
-            Self::EstimateEffect2 => "estimate_effect_2",
-            Self::EstimateEffect3 => "estimate_effect_3",
+            Self::EstimateEffect2 => &FunctionSignature {
+                name: "estimate_effect_2",
+                params: ESTIMATE_EFFECT_2_PARAMS,
+                returns: ReturnType::Real,
+            },
+            Self::EstimateEffect3 => &FunctionSignature {
+                name: "estimate_effect_3",
+                params: ESTIMATE_EFFECT_3_PARAMS,
+                returns: ReturnType::Real,
+            },
         }
+    }
+
+    pub const fn name(self) -> &'static str {
+        self.signature().name
     }
 
     pub fn from_name(name: &str) -> Option<Self> {
-        match name {
-            "estimate_effect_2" => Some(Self::EstimateEffect2),
-            "estimate_effect_3" => Some(Self::EstimateEffect3),
-            _ => None,
-        }
+        Self::ALL
+            .into_iter()
+            .find(|function| function.name() == name)
     }
 
-    pub const fn argument_count(self) -> ArgumentCount {
-        match self {
-            Self::EstimateEffect2 => ArgumentCount::Exact(5),
-            Self::EstimateEffect3 => ArgumentCount::Exact(10),
-        }
+    pub fn argument_count(self) -> ArgumentCount {
+        self.signature().argument_count()
     }
 }
 
@@ -713,10 +866,15 @@ pub enum MathFunction {
     Cos,
     Tan,
     Sqrt,
+    Tanh,
+    Sigmoid,
+    Logit,
+    IfElse,
+    Effect50,
 }
 
 impl MathFunction {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 21] = [
         Self::Abs,
         Self::Ceil,
         Self::Exp,
@@ -733,62 +891,263 @@ impl MathFunction {
         Self::Cos,
         Self::Tan,
         Self::Sqrt,
+        Self::Tanh,
+        Self::Sigmoid,
+        Self::Logit,
+        Self::IfElse,
+        Self::Effect50,
     ];
 
-    pub const fn name(self) -> &'static str {
+    /// Adding a function means adding a variant, its signature here, and its
+    /// arm in [`MathFunction::evaluate`]; the compiler points at both.
+    pub const fn signature(self) -> &'static FunctionSignature {
+        use ReturnType::{PromotedArgs, Real};
         match self {
-            Self::Abs => "abs",
-            Self::Ceil => "ceil",
-            Self::Exp => "exp",
-            Self::Floor => "floor",
-            Self::Ln => "ln",
-            Self::Log => "log",
-            Self::Log10 => "log10",
-            Self::Log2 => "log2",
-            Self::Max => "max",
-            Self::Min => "min",
-            Self::Pow => "pow",
-            Self::Round => "round",
-            Self::Sin => "sin",
-            Self::Cos => "cos",
-            Self::Tan => "tan",
-            Self::Sqrt => "sqrt",
+            Self::Abs => &FunctionSignature {
+                name: "abs",
+                params: X,
+                returns: PromotedArgs,
+            },
+            Self::Ceil => &FunctionSignature {
+                name: "ceil",
+                params: X,
+                returns: Real,
+            },
+            Self::Exp => &FunctionSignature {
+                name: "exp",
+                params: X,
+                returns: Real,
+            },
+            Self::Floor => &FunctionSignature {
+                name: "floor",
+                params: X,
+                returns: Real,
+            },
+            Self::Ln => &FunctionSignature {
+                name: "ln",
+                params: X,
+                returns: Real,
+            },
+            Self::Log => &FunctionSignature {
+                name: "log",
+                params: X,
+                returns: Real,
+            },
+            Self::Log10 => &FunctionSignature {
+                name: "log10",
+                params: X,
+                returns: Real,
+            },
+            Self::Log2 => &FunctionSignature {
+                name: "log2",
+                params: X,
+                returns: Real,
+            },
+            Self::Max => &FunctionSignature {
+                name: "max",
+                params: AB,
+                returns: PromotedArgs,
+            },
+            Self::Min => &FunctionSignature {
+                name: "min",
+                params: AB,
+                returns: PromotedArgs,
+            },
+            Self::Pow => &FunctionSignature {
+                name: "pow",
+                params: POW_PARAMS,
+                returns: Real,
+            },
+            Self::Round => &FunctionSignature {
+                name: "round",
+                params: X,
+                returns: Real,
+            },
+            Self::Sin => &FunctionSignature {
+                name: "sin",
+                params: X,
+                returns: Real,
+            },
+            Self::Cos => &FunctionSignature {
+                name: "cos",
+                params: X,
+                returns: Real,
+            },
+            Self::Tan => &FunctionSignature {
+                name: "tan",
+                params: X,
+                returns: Real,
+            },
+            Self::Sqrt => &FunctionSignature {
+                name: "sqrt",
+                params: X,
+                returns: Real,
+            },
+            Self::Tanh => &FunctionSignature {
+                name: "tanh",
+                params: X,
+                returns: Real,
+            },
+            Self::Sigmoid => &FunctionSignature {
+                name: "sigmoid",
+                params: SIGMOID_PARAMS,
+                returns: Real,
+            },
+            Self::Logit => &FunctionSignature {
+                name: "logit",
+                params: LOGIT_PARAMS,
+                returns: Real,
+            },
+            Self::IfElse => &FunctionSignature {
+                name: "ifelse",
+                params: IFELSE_PARAMS,
+                returns: PromotedArgs,
+            },
+            Self::Effect50 => &FunctionSignature {
+                name: "effect50",
+                params: EFFECT50_PARAMS,
+                returns: Real,
+            },
         }
+    }
+
+    pub const fn name(self) -> &'static str {
+        self.signature().name
     }
 
     pub fn from_name(name: &str) -> Option<Self> {
-        match name {
-            "abs" => Some(Self::Abs),
-            "ceil" => Some(Self::Ceil),
-            "exp" => Some(Self::Exp),
-            "floor" => Some(Self::Floor),
-            "ln" => Some(Self::Ln),
-            "log" => Some(Self::Log),
-            "log10" => Some(Self::Log10),
-            "log2" => Some(Self::Log2),
-            "max" => Some(Self::Max),
-            "min" => Some(Self::Min),
-            "pow" => Some(Self::Pow),
-            "round" => Some(Self::Round),
-            "sin" => Some(Self::Sin),
-            "cos" => Some(Self::Cos),
-            "tan" => Some(Self::Tan),
-            "sqrt" => Some(Self::Sqrt),
-            _ => None,
-        }
+        Self::ALL
+            .into_iter()
+            .find(|function| function.name() == name)
     }
 
     pub fn argument_count(self) -> ArgumentCount {
+        self.signature().argument_count()
+    }
+
+    /// Evaluates the function on real arguments given in signature order.
+    ///
+    /// Returns `None` unless `args` holds exactly one value per parameter.
+    /// A `bool` parameter is passed as `1.0` (true) or `0.0` (false).
+    /// Analysis uses this to fold constant calls; backends must match it.
+    pub fn evaluate(self, args: &[f64]) -> Option<f64> {
+        if args.len() != self.signature().params.len() {
+            return None;
+        }
+        Some(match self {
+            Self::Abs => args[0].abs(),
+            Self::Ceil => args[0].ceil(),
+            Self::Exp => args[0].exp(),
+            Self::Floor => args[0].floor(),
+            Self::Ln | Self::Log => args[0].ln(),
+            Self::Log10 => args[0].log10(),
+            Self::Log2 => args[0].log2(),
+            Self::Max => args[0].max(args[1]),
+            Self::Min => args[0].min(args[1]),
+            Self::Pow => args[0].powf(args[1]),
+            Self::Round => args[0].round(),
+            Self::Sin => args[0].sin(),
+            Self::Cos => args[0].cos(),
+            Self::Tan => args[0].tan(),
+            Self::Sqrt => args[0].sqrt(),
+            Self::Tanh => args[0].tanh(),
+            Self::Sigmoid => sigmoid(args[0], args[1]),
+            Self::Logit => logit(args[0]),
+            Self::IfElse => {
+                if args[0] != 0.0 {
+                    args[1]
+                } else {
+                    args[2]
+                }
+            }
+            Self::Effect50 => effect50(args[0], args[1], args[2], args[3], args[4]),
+        })
+    }
+}
+
+/// Any built-in DSL function that user code can call by name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuiltinFunction {
+    Math(MathFunction),
+    Utility(UtilityFunctions),
+}
+
+impl BuiltinFunction {
+    pub fn all() -> impl Iterator<Item = Self> {
+        MathFunction::ALL
+            .into_iter()
+            .map(Self::Math)
+            .chain(UtilityFunctions::ALL.into_iter().map(Self::Utility))
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::all().find(|function| function.name() == name)
+    }
+
+    pub const fn signature(self) -> &'static FunctionSignature {
         match self {
-            Self::Max | Self::Min | Self::Pow => ArgumentCount::Exact(2),
-            _ => ArgumentCount::Exact(1),
+            Self::Math(function) => function.signature(),
+            Self::Utility(function) => function.signature(),
         }
     }
+
+    pub const fn name(self) -> &'static str {
+        self.signature().name
+    }
+}
+
+/// Logistic function `1 / (1 + exp(-k * x))`, exposed in the DSL as
+/// `sigmoid(x, k = 1)`.
+///
+/// It rises smoothly from 0 to 1, passing 0.5 at `x = 0`; a larger `k` makes
+/// the step steeper. `sigmoid(x)` is the inverse of [`logit`], and
+/// `sigmoid(t - t0, k)` is a smooth switch that turns on at `t0`.
+pub fn sigmoid(x: f64, k: f64) -> f64 {
+    1.0 / (1.0 + (-k * x).exp())
+}
+
+/// Log-odds `ln(p / (1 - p))`, exposed in the DSL as `logit(p)`; the inverse
+/// of [`sigmoid`] with `k = 1`.
+pub fn logit(p: f64) -> f64 {
+    (p / (1.0 - p)).ln()
+}
+
+/// Sigmoid Emax (Hill) effect, exposed in the DSL as
+/// `effect50(min, max, e50, h, x)`.
+///
+/// Returns `min + (max - min) * x^h / (e50^h + x^h)`: `min` at `x = 0`,
+/// halfway between `min` and `max` at `x = e50`, and approaching `max` as `x`
+/// grows. It is evaluated as `1 / (1 + (e50 / x)^h)` so that large `x` or `h`
+/// saturate to `max` instead of overflowing to `inf / inf`.
+///
+/// Any `x <= 0` counts as no drug and returns `min`, so the slightly negative
+/// amounts an ODE solver can leave behind do not turn into `NaN`.
+///
+/// In the DSL `x` is required and the others default to `min = 0`,
+/// `max = 1`, `e50 = 0.5`, and `h = 1`.
+///
+/// ```
+/// use pharmsol_dsl::effect50;
+///
+/// assert_eq!(effect50(0.0, 1.0, 0.5, 1.0, 0.5), 0.5);
+/// assert_eq!(effect50(0.0, 1.0, 0.5, 1.0, 0.0), 0.0);
+/// assert_eq!(effect50(0.0, 1.0, 0.5, 2.5, -1e-12), 0.0);
+/// ```
+pub fn effect50(min: f64, max: f64, e50: f64, h: f64, x: f64) -> f64 {
+    if x <= 0.0 {
+        return min;
+    }
+    min + (max - min) / (1.0 + (e50 / x).powf(h))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArgumentCount {
     Exact(usize),
+    /// Between `min` required and `max` total arguments.
+    Range {
+        min: usize,
+        max: usize,
+    },
 }
 
 #[cfg(test)]
@@ -1030,5 +1389,27 @@ mod tests {
             error.to_string(),
             "analytical structure `one_compartment_with_absorption` requires `ka`; declare it in `params` or `derived`"
         );
+    }
+
+    #[test]
+    fn effect50_matches_the_sigmoid_emax_model() {
+        use super::effect50;
+
+        // Documented defaults: min 0, max 1, e50 0.5, h 1, x 0.5.
+        assert_eq!(effect50(0.0, 1.0, 0.5, 1.0, 0.5), 0.5);
+        assert_eq!(effect50(2.0, 10.0, 3.0, 2.5, 3.0), 6.0);
+        assert_eq!(effect50(1.0, 0.0, 0.5, 1.0, 0.0), 1.0);
+
+        let (min, max, e50, h, x): (f64, f64, f64, f64, f64) = (0.2, 3.0, 1.7, 2.3, 0.9);
+        let expected = min + (max - min) * x.powf(h) / (e50.powf(h) + x.powf(h));
+        assert!((effect50(min, max, e50, h, x) - expected).abs() < 1e-14);
+
+        // Saturates instead of overflowing to inf / inf.
+        assert_eq!(effect50(0.0, 1.0, 1.0, 400.0, 10.0), 1.0);
+        assert_eq!(effect50(0.0, 1.0, 0.0, 1.0, 2.0), 1.0);
+
+        // No drug: zero or a tiny negative solver residue returns `min`.
+        assert_eq!(effect50(0.2, 1.0, 0.5, 2.5, -1e-12), 0.2);
+        assert_eq!(effect50(0.2, 1.0, 0.0, 1.0, 0.0), 0.2);
     }
 }
