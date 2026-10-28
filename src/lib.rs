@@ -331,7 +331,7 @@ pub mod prelude {
     pub mod data {
         pub use crate::data::{
             error_model::AssayErrorModel,
-            output_model::{Family, OutputModel, OutputModels, Scale, Transform},
+            output_model::{DegreesOfFreedom, Family, OutputModel, OutputModels, Scale, Transform},
             parser::{read_pmetrics, DataError, DataRow, DataRowBuilder},
             residual_error::ResidualErrorModel,
             Covariates, Data, Event, Occasion, Subject,
@@ -343,7 +343,7 @@ pub mod prelude {
         builder::SubjectBuilderExt,
         error_model::{AssayErrorModel, ErrorPoly},
         event::{AUCMethod, BLQRule, OutputLabel, Route},
-        output_model::{Family, OutputModel, OutputModels, Scale, Transform},
+        output_model::{DegreesOfFreedom, Family, OutputModel, OutputModels, Scale, Transform},
         residual_error::ResidualErrorModel,
         Covariates, Data, Event, Interpolation, Occasion, Subject,
     };

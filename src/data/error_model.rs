@@ -134,7 +134,7 @@ pub(crate) fn hash_model<H: Hasher>(hasher: &mut H, model: &AssayErrorModel) {
             lambda.is_fixed().hash(hasher);
             hash_poly(hasher, poly);
         }
-        AssayErrorModel::Proportional { gamma, poly } => {
+        AssayErrorModel::Multiplicative { gamma, poly } => {
             1u8.hash(hasher);
             gamma.value().to_bits().hash(hasher);
             gamma.is_fixed().hash(hasher);
@@ -166,10 +166,10 @@ fn hash_poly<H: Hasher>(hasher: &mut H, poly: &ErrorPoly) {
 ///
 /// - [`AssayErrorModel::Additive`] (λ): `σ = sqrt(α² + λ²)`, adding noise
 ///   independent of the assay's.
-/// - [`AssayErrorModel::Proportional`] (γ): `σ = γ·α`, scaling the assay's
+/// - [`AssayErrorModel::Multiplicative`] (γ): `σ = γ·α`, scaling the assay's
 ///   standard deviation.
 ///
-/// Note that "proportional" here scales α, unlike
+/// "Multiplicative" scales α, the assay's own standard deviation; it is not
 /// [`ResidualErrorModel::proportional`](crate::ResidualErrorModel::proportional),
 /// which scales the prediction. An observation that carries its own
 /// polynomial (from the data set) uses it in place of the model's.
@@ -187,7 +187,8 @@ pub enum AssayErrorModel {
     },
 
     /// `σ = γ·α`.
-    Proportional {
+    #[serde(alias = "Proportional")]
+    Multiplicative {
         /// Gamma: the factor the assay's standard deviation is scaled by.
         gamma: Factor,
         /// The assay error polynomial α.
@@ -215,11 +216,11 @@ impl AssayErrorModel {
         }
     }
 
-    /// Proportional assay error, `σ = γ·α`.
+    /// Multiplicative assay error, `σ = γ·α`.
     ///
     /// A plain `f64` gamma is estimated; pass [`Factor::Fixed`] to fix it.
-    pub fn proportional(poly: ErrorPoly, gamma: impl Into<Factor>) -> Self {
-        Self::Proportional {
+    pub fn multiplicative(poly: ErrorPoly, gamma: impl Into<Factor>) -> Self {
+        Self::Multiplicative {
             gamma: gamma.into(),
             poly,
         }
@@ -228,28 +229,28 @@ impl AssayErrorModel {
     fn factor_ref(&self) -> &Factor {
         match self {
             Self::Additive { lambda, .. } => lambda,
-            Self::Proportional { gamma, .. } => gamma,
+            Self::Multiplicative { gamma, .. } => gamma,
         }
     }
 
     fn factor_mut(&mut self) -> &mut Factor {
         match self {
             Self::Additive { lambda, .. } => lambda,
-            Self::Proportional { gamma, .. } => gamma,
+            Self::Multiplicative { gamma, .. } => gamma,
         }
     }
 
     /// The assay error polynomial.
     pub fn errorpoly(&self) -> ErrorPoly {
         match self {
-            Self::Additive { poly, .. } | Self::Proportional { poly, .. } => *poly,
+            Self::Additive { poly, .. } | Self::Multiplicative { poly, .. } => *poly,
         }
     }
 
     /// Replace the assay error polynomial.
     pub fn set_errorpoly(&mut self, new_poly: ErrorPoly) {
         match self {
-            Self::Additive { poly, .. } | Self::Proportional { poly, .. } => *poly = new_poly,
+            Self::Additive { poly, .. } | Self::Multiplicative { poly, .. } => *poly = new_poly,
         }
     }
 
@@ -288,9 +289,9 @@ impl AssayErrorModel {
         self.factor_mut().make_variable();
     }
 
-    /// Whether this is [`AssayErrorModel::Proportional`].
-    pub fn is_proportional(&self) -> bool {
-        matches!(self, Self::Proportional { .. })
+    /// Whether this is [`AssayErrorModel::Multiplicative`].
+    pub fn is_multiplicative(&self) -> bool {
+        matches!(self, Self::Multiplicative { .. })
     }
 
     /// Whether this is [`AssayErrorModel::Additive`].
@@ -327,7 +328,7 @@ impl AssayErrorModel {
         let alpha = c0 + c1 * observation + c2 * observation.powi(2) + c3 * observation.powi(3);
         let sigma = match self {
             Self::Additive { lambda, .. } => (alpha.powi(2) + lambda.value().powi(2)).sqrt(),
-            Self::Proportional { gamma, .. } => gamma.value() * alpha,
+            Self::Multiplicative { gamma, .. } => gamma.value() * alpha,
         };
 
         if sigma < 0.0 {
@@ -378,6 +379,10 @@ pub enum ErrorModelError {
     NotAssayError(String),
     #[error("A log-transformed observation must be positive, got {0}")]
     NonPositiveObservation(f64),
+    #[error("A log-transformed prediction must be positive, got {0}")]
+    NonPositivePrediction(f64),
+    #[error("Expected {expected} error-model parameters, got {got}")]
+    ParameterCount { expected: usize, got: usize },
     #[error("Invalid distribution: {0}")]
     InvalidFamily(String),
 }
@@ -404,23 +409,23 @@ mod tests {
     }
 
     #[test]
-    fn additive_and_proportional_sigma() {
+    fn additive_and_multiplicative_sigma() {
         let observed = prediction(Some(20.0), None);
         let additive = AssayErrorModel::additive(poly(1.0), 5.0);
         assert_eq!(additive.sigma(&observed).unwrap(), 26.0_f64.sqrt());
         assert!((additive.variance(&observed).unwrap() - 26.0).abs() < 1e-12);
 
-        let proportional = AssayErrorModel::proportional(poly(1.0), 2.0);
-        assert_eq!(proportional.sigma(&observed).unwrap(), 2.0);
+        let multiplicative = AssayErrorModel::multiplicative(poly(1.0), 2.0);
+        assert_eq!(multiplicative.sigma(&observed).unwrap(), 2.0);
 
         // The polynomial is evaluated at the observation, not the prediction.
-        let linear = AssayErrorModel::proportional(ErrorPoly::new(0.0, 0.1, 0.0, 0.0), 1.0);
+        let linear = AssayErrorModel::multiplicative(ErrorPoly::new(0.0, 0.1, 0.0, 0.0), 1.0);
         assert!((linear.sigma(&observed).unwrap() - 2.0).abs() < 1e-12);
     }
 
     #[test]
     fn an_observation_polynomial_overrides_the_model_polynomial() {
-        let model = AssayErrorModel::proportional(poly(1.0), 2.0);
+        let model = AssayErrorModel::multiplicative(poly(1.0), 2.0);
         assert_eq!(
             model
                 .sigma(&prediction(Some(20.0), Some(poly(3.0))))
@@ -440,17 +445,17 @@ mod tests {
 
     #[test]
     fn invalid_sigmas_are_errors() {
-        let negative = AssayErrorModel::proportional(poly(1.0), -1.0);
+        let negative = AssayErrorModel::multiplicative(poly(1.0), -1.0);
         assert!(matches!(
             negative.sigma(&prediction(Some(1.0), None)),
             Err(ErrorModelError::NegativeSigma)
         ));
-        let infinite = AssayErrorModel::proportional(poly(f64::INFINITY), 1.0);
+        let infinite = AssayErrorModel::multiplicative(poly(f64::INFINITY), 1.0);
         assert!(matches!(
             infinite.sigma(&prediction(Some(1.0), None)),
             Err(ErrorModelError::NonFiniteSigma)
         ));
-        let zero = AssayErrorModel::proportional(poly(0.0), 1.0);
+        let zero = AssayErrorModel::multiplicative(poly(0.0), 1.0);
         assert_eq!(zero.sigma(&prediction(Some(1.0), None)).unwrap(), 0.0);
         assert!(matches!(
             zero.sigma_from_value(1.0),
@@ -463,8 +468,8 @@ mod tests {
         let additive = AssayErrorModel::additive(poly(1.0), 5.0);
         assert_eq!(additive.sigma_from_value(20.0).unwrap(), 26.0_f64.sqrt());
         assert!((additive.variance_from_value(20.0).unwrap() - 26.0).abs() < 1e-12);
-        let proportional = AssayErrorModel::proportional(poly(1.0), 2.0);
-        assert_eq!(proportional.sigma_from_value(20.0).unwrap(), 2.0);
+        let multiplicative = AssayErrorModel::multiplicative(poly(1.0), 2.0);
+        assert_eq!(multiplicative.sigma_from_value(20.0).unwrap(), 2.0);
     }
 
     #[test]
@@ -479,7 +484,7 @@ mod tests {
     fn a_plain_factor_is_variable_and_factor_fixed_is_fixed() {
         for model in [
             AssayErrorModel::additive(poly(1.0), 5.0),
-            AssayErrorModel::proportional(poly(1.0), 5.0),
+            AssayErrorModel::multiplicative(poly(1.0), 5.0),
         ] {
             assert_eq!(model.factor(), 5.0);
             assert!(!model.is_factor_fixed());
@@ -487,19 +492,19 @@ mod tests {
         }
         for model in [
             AssayErrorModel::additive(poly(1.0), Factor::Fixed(5.0)),
-            AssayErrorModel::proportional(poly(1.0), Factor::Fixed(5.0)),
+            AssayErrorModel::multiplicative(poly(1.0), Factor::Fixed(5.0)),
         ] {
             assert_eq!(model.factor(), 5.0);
             assert!(model.is_factor_fixed());
             assert!(!model.optimize());
         }
         assert!(AssayErrorModel::additive(poly(1.0), 1.0).is_additive());
-        assert!(AssayErrorModel::proportional(poly(1.0), 1.0).is_proportional());
+        assert!(AssayErrorModel::multiplicative(poly(1.0), 1.0).is_multiplicative());
     }
 
     #[test]
     fn factor_value_and_state_change_independently() {
-        let mut model = AssayErrorModel::proportional(poly(1.0), 2.0);
+        let mut model = AssayErrorModel::multiplicative(poly(1.0), 2.0);
         model.set_factor(4.0);
         assert_eq!(model.factor_param(), Factor::Variable(4.0));
 
@@ -536,7 +541,7 @@ mod tests {
         let base = AssayErrorModel::additive(poly(1.0), 5.0);
         assert_eq!(hash(&base), hash(&base.clone()));
         for other in [
-            AssayErrorModel::proportional(poly(1.0), 5.0),
+            AssayErrorModel::multiplicative(poly(1.0), 5.0),
             AssayErrorModel::additive(poly(1.0), 10.0),
             AssayErrorModel::additive(poly(1.0), Factor::Fixed(5.0)),
             AssayErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 5.0),
@@ -548,13 +553,13 @@ mod tests {
     #[test]
     fn models_are_reached_by_exact_label() {
         let mut models = OutputModels::new()
-            .add(1, AssayErrorModel::proportional(poly(1.0), 2.0))
+            .add(1, AssayErrorModel::multiplicative(poly(1.0), 2.0))
             .unwrap();
         assert!(matches!(
             OutputModels::new()
                 .add("cp", AssayErrorModel::additive(poly(1.0), 5.0))
                 .unwrap()
-                .add("cp", AssayErrorModel::proportional(poly(2.0), 3.0)),
+                .add("cp", AssayErrorModel::multiplicative(poly(2.0), 3.0)),
             Err(ErrorModelError::ExistingOutputLabel(label)) if label == "cp"
         ));
 

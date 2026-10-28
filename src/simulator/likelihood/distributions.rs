@@ -144,24 +144,6 @@ pub fn log_t_sf(obs: f64, pred: f64, sigma: f64, nu: f64) -> Result<f64, ErrorMo
     log_t_cdf(pred, obs, sigma, nu)
 }
 
-/// Log-density of the Laplace distribution with location `pred` and scale
-/// `sigma`.
-#[inline]
-pub fn log_laplace_pdf(obs: f64, pred: f64, sigma: f64) -> f64 {
-    -(2.0 * sigma).ln() - (obs - pred).abs() / sigma
-}
-
-/// Log of the CDF of the Laplace distribution (see [`log_laplace_pdf`]).
-#[inline]
-pub fn log_laplace_cdf(obs: f64, pred: f64, sigma: f64) -> f64 {
-    let z = (obs - pred) / sigma;
-    if z <= 0.0 {
-        z - std::f64::consts::LN_2
-    } else {
-        (-0.5 * (-z).exp()).ln_1p()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

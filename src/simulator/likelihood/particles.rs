@@ -6,7 +6,7 @@
 
 use std::borrow::Cow;
 
-use ndarray::{Array2, ArrayView1};
+use ndarray::Array2;
 
 use crate::data::event::Observation;
 use crate::{PharmsolError, PointPredictions};
@@ -114,20 +114,22 @@ impl ParticlePredictions {
 
     /// Mean prediction at each observation, weighted for filtered particles.
     ///
-    /// Particles with zero weight are left out, so one that diverged (and was
-    /// ruled out by the observation) does not turn the mean into NaN.
+    /// Particles whose value is not finite (a diverged state) or whose
+    /// weight is zero are left out, filtered or not, so one bad particle does
+    /// not turn the mean into NaN. An observation with no particle left gets
+    /// NaN.
     pub fn mean(&self) -> Vec<f64> {
         (0..self.nobservations())
             .map(|j| {
-                let values = self.values.column(j);
-                match &self.weights {
-                    None => values.sum() / values.len() as f64,
-                    Some(weights) => values
-                        .iter()
-                        .zip(weights.column(j))
-                        .filter(|(_, &weight)| weight > 0.0)
-                        .map(|(value, weight)| value * weight)
-                        .sum(),
+                let (sum, total) = self
+                    .counted(j)
+                    .fold((0.0, 0.0), |(sum, total), (value, weight)| {
+                        (sum + value * weight, total + weight)
+                    });
+                if total > 0.0 {
+                    sum / total
+                } else {
+                    f64::NAN
                 }
             })
             .collect()
@@ -137,8 +139,8 @@ impl ParticlePredictions {
     /// filtered particles.
     ///
     /// This is the inverse of the (weighted) empirical distribution: the
-    /// smallest particle value whose cumulative weight reaches `q`. Errors
-    /// unless `0 <= q <= 1`.
+    /// smallest particle value whose cumulative weight reaches `q`. Leaves
+    /// out the same particles as [`Self::mean`]. Errors unless `0 <= q <= 1`.
     pub fn quantile(&self, q: f64) -> Result<Vec<f64>, PharmsolError> {
         if !(0.0..=1.0).contains(&q) {
             return Err(PharmsolError::OtherError(format!(
@@ -146,14 +148,20 @@ impl ParticlePredictions {
             )));
         }
         Ok((0..self.nobservations())
-            .map(|j| {
-                weighted_quantile(
-                    self.values.column(j),
-                    self.weights.as_ref().map(|weights| weights.column(j)),
-                    q,
-                )
-            })
+            .map(|j| weighted_quantile(self.counted(j).collect(), q))
             .collect())
+    }
+
+    /// The `(value, weight)` pairs at observation `j` that summaries count:
+    /// finite values with positive weight (weight one when free-running).
+    fn counted(&self, j: usize) -> impl Iterator<Item = (f64, f64)> + '_ {
+        let weights = self.weights.as_ref().map(|weights| weights.column(j));
+        self.values
+            .column(j)
+            .into_iter()
+            .enumerate()
+            .map(move |(i, &value)| (value, weights.as_ref().map_or(1.0, |w| w[i])))
+            .filter(|&(value, weight)| value.is_finite() && weight > 0.0)
     }
 
     /// One particle's predictions, or `None` if `index` is out of range.
@@ -190,17 +198,9 @@ impl PointPredictions for ParticlePredictions {
     }
 }
 
-/// Smallest value whose cumulative weight reaches `q` of the total.
-fn weighted_quantile(values: ArrayView1<f64>, weights: Option<ArrayView1<f64>>, q: f64) -> f64 {
-    let mut pairs: Vec<(f64, f64)> = match weights {
-        None => values.iter().map(|&value| (value, 1.0)).collect(),
-        Some(weights) => values
-            .iter()
-            .zip(weights)
-            .filter(|(_, &weight)| weight > 0.0)
-            .map(|(&value, &weight)| (value, weight))
-            .collect(),
-    };
+/// Smallest value whose cumulative weight reaches `q` of the total, or NaN
+/// when there are no pairs.
+fn weighted_quantile(mut pairs: Vec<(f64, f64)>, q: f64) -> f64 {
     if pairs.is_empty() {
         return f64::NAN;
     }
@@ -270,6 +270,23 @@ mod tests {
         assert_eq!(particles.mean(), vec![2.5, 5.0]);
         assert_eq!(particles.quantile(0.2).unwrap(), vec![1.0, 5.0]);
         assert_eq!(particles.quantile(0.5).unwrap(), vec![3.0, 5.0]);
+    }
+
+    #[test]
+    fn diverged_particles_are_left_out_either_way() {
+        let free = ParticlePredictions::new(
+            observations(),
+            array![[1.0, f64::NAN], [3.0, f64::INFINITY], [5.0, 7.0]],
+            None,
+        )
+        .unwrap();
+        assert_eq!(free.mean(), vec![3.0, 7.0]);
+        assert_eq!(free.quantile(1.0).unwrap(), vec![5.0, 7.0]);
+
+        let none_left =
+            ParticlePredictions::new(observations(), array![[f64::NAN, 1.0]], None).unwrap();
+        assert!(none_left.mean()[0].is_nan());
+        assert!(none_left.quantile(0.5).unwrap()[0].is_nan());
     }
 
     #[test]

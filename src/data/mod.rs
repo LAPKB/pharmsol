@@ -97,6 +97,6 @@ pub use covariate::*;
 pub use error_model::*;
 pub use event::*;
 pub use observation_error::ObservationError;
-pub use output_model::{Family, OutputModel, OutputModels, Scale, Transform};
+pub use output_model::{DegreesOfFreedom, Family, OutputModel, OutputModels, Scale, Transform};
 pub use residual_error::*;
 pub use structs::{Data, Occasion, Subject};

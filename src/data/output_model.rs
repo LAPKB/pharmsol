@@ -10,7 +10,7 @@
 //!   [`ResidualErrorModel`] (residual error, the usual choice for parametric
 //!   algorithms such as SAEM and FOCE).
 //! - [`Family`]: the distribution: [`Family::Normal`] (the default),
-//!   [`Family::StudentT`] for heavy tails, or [`Family::Laplace`].
+//!   or [`Family::StudentT`] for heavy tails.
 //! - [`Transform`]: the scale observation and prediction are compared on:
 //!   [`Transform::Identity`] (the default) or [`Transform::Log`].
 //!
@@ -45,7 +45,7 @@ use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
 
-use crate::data::error_model::{self, AssayErrorModel, ErrorModelError, ErrorPoly};
+use crate::data::error_model::{self, AssayErrorModel, ErrorModelError, ErrorPoly, Factor};
 use crate::data::event::OutputLabel;
 use crate::data::residual_error::{self, ResidualErrorModel};
 use crate::simulator::likelihood::distributions;
@@ -79,6 +79,55 @@ impl Scale {
             Scale::Prediction(model) => Ok(model.sigma(prediction)),
         }
     }
+
+    /// The scale's parameters, in a fixed order, with whether each is fixed:
+    ///
+    /// - [`AssayErrorModel::Additive`]: `[λ]`; [`AssayErrorModel::Multiplicative`]: `[γ]`.
+    /// - [`ResidualErrorModel::Constant`]: `[a]`; [`ResidualErrorModel::Proportional`]:
+    ///   `[b]`; [`ResidualErrorModel::Combined`]: `[a, b]`. Residual
+    ///   parameters are always [`Factor::Variable`].
+    ///
+    /// The assay polynomial is data about the assay, not a parameter.
+    pub fn parameters(&self) -> Vec<Factor> {
+        match self {
+            Scale::Observation(model) => vec![model.factor_param()],
+            Scale::Prediction(model) => match *model {
+                ResidualErrorModel::Constant { a } => vec![Factor::Variable(a)],
+                ResidualErrorModel::Proportional { b } => vec![Factor::Variable(b)],
+                ResidualErrorModel::Combined { a, b } => {
+                    vec![Factor::Variable(a), Factor::Variable(b)]
+                }
+            },
+        }
+    }
+
+    /// Set the values of [`Self::parameters`], in the same order, keeping
+    /// whether each is fixed.
+    ///
+    /// Errors with [`ErrorModelError::ParameterCount`] unless `values` has
+    /// one value per parameter.
+    pub fn set_parameters(&mut self, values: &[f64]) -> Result<(), ErrorModelError> {
+        let expected = match self {
+            Scale::Prediction(ResidualErrorModel::Combined { .. }) => 2,
+            _ => 1,
+        };
+        if values.len() != expected {
+            return Err(ErrorModelError::ParameterCount {
+                expected,
+                got: values.len(),
+            });
+        }
+        match self {
+            Scale::Observation(model) => model.set_factor(values[0]),
+            Scale::Prediction(ResidualErrorModel::Constant { a }) => *a = values[0],
+            Scale::Prediction(ResidualErrorModel::Proportional { b }) => *b = values[0],
+            Scale::Prediction(ResidualErrorModel::Combined { a, b }) => {
+                *a = values[0];
+                *b = values[1];
+            }
+        }
+        Ok(())
+    }
 }
 
 impl From<AssayErrorModel> for Scale {
@@ -96,22 +145,64 @@ impl From<ResidualErrorModel> for Scale {
 /// The distribution of observations around the prediction.
 ///
 /// Every family is a location-scale family: the prediction is the location
-/// and sigma (from the [`Scale`]) the scale parameter. Sigma is the standard
-/// deviation only for [`Family::Normal`].
+/// and sigma (from the [`Scale`]) the scale parameter.
+///
+/// Sigma is the standard deviation only for [`Family::Normal`]. For
+/// [`Family::StudentT`] the standard deviation is `σ·sqrt(ν / (ν − 2))` when
+/// `ν > 2`, and undefined otherwise, so a t model's sigma is not comparable
+/// with a normal model's.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
 pub enum Family {
-    /// Normal distribution.
+    /// Normal distribution; sigma is the standard deviation.
     #[default]
     Normal,
     /// Student's t-distribution with `nu` degrees of freedom: heavier tails
     /// than the normal, so outliers weigh less. Approaches the normal as
-    /// `nu` grows.
+    /// `nu` grows. Sigma is the scale parameter, not the standard deviation.
     StudentT {
-        /// Degrees of freedom, positive and finite.
-        nu: f64,
+        /// Degrees of freedom.
+        nu: DegreesOfFreedom,
     },
-    /// Laplace (double exponential) distribution, with scale sigma.
-    Laplace,
+}
+
+/// Degrees of freedom of a [`Family::StudentT`]: positive and finite.
+///
+/// Built with [`DegreesOfFreedom::new`] (or [`Family::student_t`]), so an
+/// invalid value cannot reach a density.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(try_from = "f64", into = "f64")]
+pub struct DegreesOfFreedom(f64);
+
+impl DegreesOfFreedom {
+    /// Errors unless `nu` is positive and finite.
+    pub fn new(nu: f64) -> Result<Self, ErrorModelError> {
+        if nu > 0.0 && nu.is_finite() {
+            Ok(Self(nu))
+        } else {
+            Err(ErrorModelError::InvalidFamily(format!(
+                "Student's t needs finite nu > 0, got {nu}"
+            )))
+        }
+    }
+
+    /// The value.
+    pub fn value(&self) -> f64 {
+        self.0
+    }
+}
+
+impl TryFrom<f64> for DegreesOfFreedom {
+    type Error = ErrorModelError;
+
+    fn try_from(nu: f64) -> Result<Self, Self::Error> {
+        Self::new(nu)
+    }
+}
+
+impl From<DegreesOfFreedom> for f64 {
+    fn from(nu: DegreesOfFreedom) -> Self {
+        nu.0
+    }
 }
 
 impl Family {
@@ -119,18 +210,9 @@ impl Family {
     ///
     /// Errors unless `nu` is positive and finite.
     pub fn student_t(nu: f64) -> Result<Self, ErrorModelError> {
-        let family = Family::StudentT { nu };
-        family.validate()?;
-        Ok(family)
-    }
-
-    fn validate(&self) -> Result<(), ErrorModelError> {
-        match *self {
-            Family::StudentT { nu } if !(nu > 0.0 && nu.is_finite()) => Err(
-                ErrorModelError::InvalidFamily(format!("Student's t needs nu > 0, got {nu}")),
-            ),
-            _ => Ok(()),
-        }
+        Ok(Family::StudentT {
+            nu: DegreesOfFreedom::new(nu)?,
+        })
     }
 
     /// Log-density of `y` given location `f` and scale `sigma`.
@@ -138,11 +220,7 @@ impl Family {
     pub fn log_pdf(&self, y: f64, f: f64, sigma: f64) -> Result<f64, ErrorModelError> {
         match *self {
             Family::Normal => Ok(distributions::lognormpdf(y, f, sigma)),
-            Family::StudentT { nu } => {
-                self.validate()?;
-                distributions::log_t_pdf(y, f, sigma, nu)
-            }
-            Family::Laplace => Ok(distributions::log_laplace_pdf(y, f, sigma)),
+            Family::StudentT { nu } => distributions::log_t_pdf(y, f, sigma, nu.value()),
         }
     }
 
@@ -151,11 +229,7 @@ impl Family {
     pub fn log_cdf(&self, y: f64, f: f64, sigma: f64) -> Result<f64, ErrorModelError> {
         match *self {
             Family::Normal => distributions::lognormcdf(y, f, sigma),
-            Family::StudentT { nu } => {
-                self.validate()?;
-                distributions::log_t_cdf(y, f, sigma, nu)
-            }
-            Family::Laplace => Ok(distributions::log_laplace_cdf(y, f, sigma)),
+            Family::StudentT { nu } => distributions::log_t_cdf(y, f, sigma, nu.value()),
         }
     }
 
@@ -165,12 +239,7 @@ impl Family {
     pub fn log_sf(&self, y: f64, f: f64, sigma: f64) -> Result<f64, ErrorModelError> {
         match *self {
             Family::Normal => distributions::lognormccdf(y, f, sigma),
-            Family::StudentT { nu } => {
-                self.validate()?;
-                distributions::log_t_sf(y, f, sigma, nu)
-            }
-            // The Laplace distribution is symmetric.
-            Family::Laplace => Ok(distributions::log_laplace_cdf(f, y, sigma)),
+            Family::StudentT { nu } => distributions::log_t_sf(y, f, sigma, nu.value()),
         }
     }
 }
@@ -184,6 +253,14 @@ pub enum Transform {
     /// Compare their natural logarithms. Observations must be positive; a
     /// prediction that is not positive gets zero likelihood.
     ///
+    /// The [`Scale`] still gives sigma in the units of the observation. It is
+    /// carried to the log scale by the delta method, `σ_log = σ / x`, where
+    /// `x` is what the scale computes sigma from: the observation for
+    /// [`Scale::Observation`], the prediction for [`Scale::Prediction`]. So a
+    /// proportional residual error `σ = b·f` becomes a constant `b` on the
+    /// log scale (see [`OutputModel::exponential`]), and an assay polynomial
+    /// becomes the assay's coefficient of variation.
+    ///
     /// The density includes the Jacobian `-ln(y)`, so it is a density of the
     /// observation on its original scale, comparable with
     /// [`Transform::Identity`].
@@ -194,7 +271,8 @@ pub enum Transform {
 /// [`Transform`].
 ///
 /// Sigma is always computed from the untransformed observation or
-/// prediction, then used on the transformed scale.
+/// prediction, in its units, then carried to the transformed scale (see
+/// [`Transform::Log`]).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OutputModel {
     scale: Scale,
@@ -215,8 +293,11 @@ impl OutputModel {
     }
 
     /// Exponential error: normal with constant `sigma` on the log scale.
+    ///
+    /// This is a proportional residual error on a log transform, which the
+    /// delta method makes a constant `sigma` on the log scale.
     pub fn exponential(sigma: f64) -> Self {
-        Self::new(ResidualErrorModel::constant(sigma)).with_transform(Transform::Log)
+        Self::new(ResidualErrorModel::proportional(sigma)).with_transform(Transform::Log)
     }
 
     /// Use another distribution.
@@ -283,7 +364,8 @@ impl OutputModel {
         }
     }
 
-    /// Sigma for a prediction and its observation.
+    /// Sigma for a prediction and its observation, on the scale they are
+    /// compared on (the log scale for [`Transform::Log`]).
     ///
     /// Errors with [`ErrorModelError::MissingObservation`] when sigma comes
     /// from the observation and there is none.
@@ -293,8 +375,28 @@ impl OutputModel {
             (Scale::Prediction(_), None) => f64::NAN,
             (Scale::Observation(_), None) => return Err(ErrorModelError::MissingObservation),
         };
-        self.scale
-            .sigma(observation, prediction.prediction(), prediction.errorpoly())
+        self.transformed_sigma(observation, prediction.prediction(), prediction.errorpoly())
+    }
+
+    /// Sigma from the [`Scale`], carried to the transformed scale.
+    #[inline]
+    fn transformed_sigma(
+        &self,
+        observation: f64,
+        prediction: f64,
+        errorpoly: Option<ErrorPoly>,
+    ) -> Result<f64, ErrorModelError> {
+        let sigma = self.scale.sigma(observation, prediction, errorpoly)?;
+        match self.transform {
+            Transform::Identity => Ok(sigma),
+            // Delta method: sd(ln x) ≈ sd(x) / x, at the value sigma came from.
+            Transform::Log => match self.scale {
+                Scale::Observation(_) if observation > 0.0 => Ok(sigma / observation),
+                Scale::Observation(_) => Err(ErrorModelError::NonPositiveObservation(observation)),
+                Scale::Prediction(_) if prediction > 0.0 => Ok(sigma / prediction),
+                Scale::Prediction(_) => Err(ErrorModelError::NonPositivePrediction(prediction)),
+            },
+        }
     }
 
     /// Log-density of one observation given its prediction.
@@ -309,7 +411,6 @@ impl OutputModel {
         censoring: Censor,
         errorpoly: Option<ErrorPoly>,
     ) -> Result<f64, PharmsolError> {
-        let sigma = self.scale.sigma(observation, prediction, errorpoly)?;
         let (y, f, jacobian) = match self.transform {
             Transform::Identity => (observation, prediction, 0.0),
             Transform::Log => {
@@ -323,6 +424,7 @@ impl OutputModel {
                 (y, prediction.ln(), -y)
             }
         };
+        let sigma = self.transformed_sigma(observation, prediction, errorpoly)?;
         let log_density = match censoring {
             Censor::None => self.family.log_pdf(y, f, sigma)? + jacobian,
             Censor::BLOQ => self.family.log_cdf(y, f, sigma)?,
@@ -346,9 +448,8 @@ impl OutputModel {
             Family::Normal => 0u8.hash(hasher),
             Family::StudentT { nu } => {
                 1u8.hash(hasher);
-                nu.to_bits().hash(hasher);
+                nu.value().to_bits().hash(hasher);
             }
-            Family::Laplace => 2u8.hash(hasher),
         }
         match self.transform {
             Transform::Identity => 0u8.hash(hasher),
@@ -558,6 +659,30 @@ impl OutputModels {
         self.assay_mut(outeq)?.set_factor(factor);
         Ok(())
     }
+
+    /// The [`Scale::parameters`] of an output, assay or residual.
+    ///
+    /// Errors with [`ErrorModelError::UnknownOutputLabel`] if the output has
+    /// no model.
+    pub fn parameters(&self, outeq: impl ToString) -> Result<Vec<Factor>, ErrorModelError> {
+        Ok(self.model_for(&outeq.to_string())?.scale().parameters())
+    }
+
+    /// Set the [`Scale::parameters`] of an output, assay or residual.
+    ///
+    /// Errors as [`Self::parameters`] and [`Scale::set_parameters`] do.
+    pub fn set_parameters(
+        &mut self,
+        outeq: impl ToString,
+        values: &[f64],
+    ) -> Result<(), ErrorModelError> {
+        let label = outeq.to_string();
+        self.models
+            .get_mut(label.as_str())
+            .ok_or(ErrorModelError::UnknownOutputLabel(label))?
+            .scale_mut()
+            .set_parameters(values)
+    }
 }
 
 impl ObservationModel for OutputModels {
@@ -675,24 +800,16 @@ mod tests {
     fn invalid_degrees_of_freedom_are_rejected() {
         assert!(Family::student_t(0.0).is_err());
         assert!(Family::student_t(f64::NAN).is_err());
-        let model = constant(1.0).with_family(Family::StudentT { nu: -1.0 });
-        assert!(model.log_density(1.0, 0.0, Censor::None, None).is_err());
-    }
-
-    #[test]
-    fn laplace_matches_the_closed_form() {
-        let model = constant(2.0).with_family(Family::Laplace);
-        let expected = -(4.0_f64).ln() - 1.5 / 2.0;
-        assert!((density(&model, 1.5, 0.0) - expected).abs() < 1e-12);
+        assert!(DegreesOfFreedom::new(f64::INFINITY).is_err());
+        // Deserializing goes through the same check.
+        assert!(serde_json::from_str::<Family>(r#"{"StudentT":{"nu":-1.0}}"#).is_err());
+        let family: Family = serde_json::from_str(r#"{"StudentT":{"nu":4.0}}"#).unwrap();
+        assert_eq!(family, Family::student_t(4.0).unwrap());
     }
 
     #[test]
     fn censoring_uses_the_family_tails() {
-        for family in [
-            Family::Normal,
-            Family::student_t(4.0).unwrap(),
-            Family::Laplace,
-        ] {
+        for family in [Family::Normal, Family::student_t(4.0).unwrap()] {
             let model = constant(1.0).with_family(family);
             // At the prediction, half the mass is on either side.
             for censoring in [Censor::BLOQ, Censor::ALOQ] {
@@ -739,6 +856,36 @@ mod tests {
     }
 
     #[test]
+    fn log_transform_carries_sigma_by_the_delta_method() {
+        let (y, f): (f64, f64) = (20.0, 10.0);
+        let expected =
+            |sigma_log: f64| distributions::lognormpdf(y.ln(), f.ln(), sigma_log) - y.ln();
+
+        // Residual: sigma is computed at the prediction, divided by it.
+        let constant_log = constant(2.0).with_transform(Transform::Log);
+        assert!((density(&constant_log, y, f) - expected(2.0 / f)).abs() < 1e-12);
+        let combined =
+            OutputModel::new(ResidualErrorModel::combined(3.0, 0.4)).with_transform(Transform::Log);
+        let sigma = (9.0 + 0.16 * f * f).sqrt();
+        assert!((density(&combined, y, f) - expected(sigma / f)).abs() < 1e-12);
+
+        // Assay: sigma is computed at the observation, divided by it, so a
+        // purely linear polynomial is a constant coefficient of variation.
+        let assay = OutputModel::new(AssayErrorModel::additive(
+            ErrorPoly::new(0.0, 0.1, 0.0, 0.0),
+            0.0,
+        ))
+        .with_transform(Transform::Log);
+        assert!((density(&assay, y, f) - expected(0.1)).abs() < 1e-12);
+
+        // `sigma` reports the log-scale sigma too.
+        let prediction =
+            Observation::new(0.0, Some(y), 0, None, 0, Censor::None).to_prediction(f, vec![]);
+        assert!((assay.sigma(&prediction).unwrap() - 0.1).abs() < 1e-12);
+        assert!((OutputModel::exponential(0.3).sigma(&prediction).unwrap() - 0.3).abs() < 1e-12);
+    }
+
+    #[test]
     fn log_transform_rejects_non_positive_values() {
         let model = OutputModel::exponential(0.3);
         assert!(matches!(
@@ -761,7 +908,10 @@ mod tests {
                 AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0),
             )
             .unwrap()
-            .add("effect", constant(0.5).with_family(Family::Laplace))
+            .add(
+                "effect",
+                constant(0.5).with_family(Family::student_t(3.0).unwrap()),
+            )
             .unwrap()
             .add("metabolite", OutputModel::exponential(0.2))
             .unwrap();
@@ -778,7 +928,7 @@ mod tests {
             models
                 .log_density(&effect, 3.0, 2.0, Censor::None, None)
                 .unwrap(),
-            distributions::log_laplace_pdf(3.0, 2.0, 0.5)
+            distributions::log_t_pdf(3.0, 2.0, 0.5, 3.0).unwrap()
         );
         assert!(models
             .log_density(&OutputLabel::new("other"), 3.0, 2.0, Censor::None, None)
@@ -821,15 +971,54 @@ mod tests {
     }
 
     #[test]
+    fn parameters_cover_assay_and_residual_scales() {
+        let mut models = OutputModels::new()
+            .add(
+                "cp",
+                AssayErrorModel::multiplicative(
+                    ErrorPoly::new(1.0, 0.0, 0.0, 0.0),
+                    Factor::Fixed(2.0),
+                ),
+            )
+            .unwrap()
+            .add("effect", ResidualErrorModel::combined(0.5, 0.1))
+            .unwrap();
+
+        assert_eq!(models.parameters("cp").unwrap(), vec![Factor::Fixed(2.0)]);
+        assert_eq!(
+            models.parameters("effect").unwrap(),
+            vec![Factor::Variable(0.5), Factor::Variable(0.1)]
+        );
+
+        models.set_parameters("cp", &[3.0]).unwrap();
+        models.set_parameters("effect", &[0.7, 0.2]).unwrap();
+        // Setting keeps a fixed factor fixed.
+        assert_eq!(models.parameters("cp").unwrap(), vec![Factor::Fixed(3.0)]);
+        assert_eq!(
+            models.get("effect").unwrap().residual(),
+            Some(&ResidualErrorModel::combined(0.7, 0.2))
+        );
+
+        assert!(matches!(
+            models.set_parameters("effect", &[1.0]),
+            Err(ErrorModelError::ParameterCount {
+                expected: 2,
+                got: 1
+            })
+        ));
+        assert!(matches!(
+            models.parameters("other"),
+            Err(ErrorModelError::UnknownOutputLabel(_))
+        ));
+    }
+
+    #[test]
     fn hash_covers_scale_family_and_transform() {
         let base = OutputModels::new().add("cp", constant(1.0)).unwrap();
         let variants = [
             OutputModels::new().add("cp", constant(2.0)).unwrap(),
             OutputModels::new()
                 .add("cp", ResidualErrorModel::proportional(1.0))
-                .unwrap(),
-            OutputModels::new()
-                .add("cp", constant(1.0).with_family(Family::Laplace))
                 .unwrap(),
             OutputModels::new()
                 .add(

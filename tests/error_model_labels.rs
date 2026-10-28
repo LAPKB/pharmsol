@@ -56,7 +56,7 @@ fn label_keyed_error_models_are_optimized_by_npag_style_loop() -> Result<(), Pha
         )?
         .add(
             "effect",
-            AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 1.0),
+            AssayErrorModel::multiplicative(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 1.0),
         )?;
 
     // The same iteration NPAG does when it optimizes gamma/lambda.
@@ -99,7 +99,7 @@ fn error_models_bind_by_label_not_insertion_order() -> Result<(), PharmsolError>
     let parameters = parameters(&ode);
 
     let cp = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.5);
-    let effect = AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 3.0);
+    let effect = AssayErrorModel::multiplicative(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 3.0);
 
     // Added in the opposite order to the declared outputs on purpose.
     let reversed = OutputModels::new()
@@ -128,7 +128,7 @@ fn bound_and_label_likelihood_paths_agree() -> Result<(), PharmsolError> {
         )?
         .add(
             "effect",
-            AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 1.0),
+            AssayErrorModel::multiplicative(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 1.0),
         )?;
 
     // The simulator scores against error models bound to output slots; a
