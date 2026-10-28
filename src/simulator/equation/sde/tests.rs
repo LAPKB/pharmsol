@@ -418,23 +418,27 @@ fn seed_selects_independent_particle_paths() {
 
 #[test]
 fn particle_filter_preserves_finite_tail_log_likelihoods() {
-    let predictions = vec![
-        Prediction {
-            observation: Some(20.0),
-            ..Prediction::default()
-        };
-        16
-    ];
+    use crate::data::event::Observation;
+    use crate::Censor;
+    let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
+    let values = vec![0.0; 16];
     let error_models = filter_error_models();
-    let expected = predictions[0].log_likelihood(&error_models).unwrap();
+    let expected = error_models
+        .log_density(observation.outeq(), 20.0, 0.0, Censor::None, None)
+        .unwrap();
     assert!(expected.is_finite());
     assert_eq!(expected.exp(), 0.0);
 
-    let (actual, indices) = filter(&predictions, &error_models, &mut StdRng::seed_from_u64(0))
-        .unwrap()
-        .expect("finite particle log-likelihoods must not become zero weights");
-    assert_eq!(actual, expected);
-    assert_eq!(indices, (0..predictions.len()).collect::<Vec<_>>());
+    let filtered = filter(
+        &observation,
+        &values,
+        &error_models,
+        &mut StdRng::seed_from_u64(0),
+    )
+    .unwrap()
+    .expect("finite particle log-likelihoods must not become zero weights");
+    assert_eq!(filtered.log_mean, expected);
+    assert_eq!(filtered.indices, (0..values.len()).collect::<Vec<_>>());
 }
 
 #[test]
@@ -702,7 +706,7 @@ fn zero_diffusion_likelihood_matches_the_ode() {
 }
 
 #[test]
-fn heavy_tails_keep_an_outlier_from_ruling_out_every_particle() {
+fn heavy_tails_score_an_outlier_above_a_normal() {
     use crate::data::error_model::{AssayErrorModel, ErrorPoly};
     use crate::{Family, OutputModel};
 
@@ -712,11 +716,11 @@ fn heavy_tails_keep_an_outlier_from_ruling_out_every_particle() {
         .build();
     let assay = AssayErrorModel::additive(ErrorPoly::new(1.0e-3, 0.0, 0.0, 0.0), 0.0);
 
-    // Under a normal, an observation this far from every particle has zero
-    // likelihood.
+    // Under a normal, an observation this far from every particle is
+    // finite only because the filter works in log space.
     let normal = OutputModels::new().add(0, assay.clone()).unwrap();
     let normal_ll = sde.log_likelihood(&subject, &[1.0, 50.0], &normal).unwrap();
-    assert_eq!(normal_ll, f64::NEG_INFINITY);
+    assert!(normal_ll.is_finite());
 
     // A t-distribution's polynomial tails still weigh the particles.
     let student = OutputModels::new()
@@ -729,6 +733,7 @@ fn heavy_tails_keep_an_outlier_from_ruling_out_every_particle() {
         .log_likelihood(&subject, &[1.0, 50.0], &student)
         .unwrap();
     assert!(student_ll.is_finite());
+    assert!(student_ll > normal_ll);
 
     let simulation = sde
         .simulate(&subject, &[1.0, 50.0], Some(&student))
