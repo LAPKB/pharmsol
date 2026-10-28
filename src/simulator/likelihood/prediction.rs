@@ -198,7 +198,7 @@ impl std::fmt::Display for Prediction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::error_model::{AssayErrorModel, ErrorPoly};
+    use crate::OutputModel;
 
     fn create_test_prediction(obs: f64, pred: f64) -> Prediction {
         Prediction {
@@ -214,12 +214,7 @@ mod tests {
     }
 
     fn create_error_models() -> OutputModels {
-        OutputModels::new()
-            .add(
-                0,
-                AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0),
-            )
-            .unwrap()
+        OutputModels::new().with(0, OutputModel::assay([1.0]))
     }
 
     #[test]

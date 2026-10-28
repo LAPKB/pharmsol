@@ -50,21 +50,15 @@ fn label_keyed_error_models_are_optimized_by_npag_style_loop() -> Result<(), Pha
     let parameters = parameters(&ode);
 
     let mut error_models = OutputModels::new()
-        .add(
-            "cp",
-            AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.5),
-        )?
-        .add(
-            "effect",
-            AssayErrorModel::multiplicative(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 1.0),
-        )?;
+        .with("cp", OutputModel::assay([1.0]).additive(0.5))
+        .with("effect", OutputModel::assay([1.0]).multiplicative(1.0));
 
     // The same iteration NPAG does when it optimizes gamma/lambda.
     let optimizable: Vec<OutputLabel> = error_models
         .iter_mut()
         .filter_map(|(label, model)| {
             model
-                .assay()
+                .as_assay()
                 .is_some_and(AssayErrorModel::optimize)
                 .then(|| label.clone())
         })
@@ -98,14 +92,14 @@ fn error_models_bind_by_label_not_insertion_order() -> Result<(), PharmsolError>
     let subject = &data.subjects()[0];
     let parameters = parameters(&ode);
 
-    let cp = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.5);
-    let effect = AssayErrorModel::multiplicative(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 3.0);
+    let cp = OutputModel::assay([1.0]).additive(0.5);
+    let effect = OutputModel::assay([1.0]).multiplicative(3.0);
 
     // Added in the opposite order to the declared outputs on purpose.
     let reversed = OutputModels::new()
-        .add("effect", effect.clone())?
-        .add("cp", cp.clone())?;
-    let declared = OutputModels::new().add("cp", cp)?.add("effect", effect)?;
+        .with("effect", effect.clone())
+        .with("cp", cp.clone());
+    let declared = OutputModels::new().with("cp", cp).with("effect", effect);
 
     assert_eq!(reversed, declared);
     assert_eq!(
@@ -122,14 +116,8 @@ fn bound_and_label_likelihood_paths_agree() -> Result<(), PharmsolError> {
     let subject = &data.subjects()[0];
     let parameters = parameters(&ode);
     let error_models = OutputModels::new()
-        .add(
-            "cp",
-            AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.5),
-        )?
-        .add(
-            "effect",
-            AssayErrorModel::multiplicative(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 1.0),
-        )?;
+        .with("cp", OutputModel::assay([1.0]).additive(0.5))
+        .with("effect", OutputModel::assay([1.0]).multiplicative(1.0));
 
     // The simulator scores against error models bound to output slots; a
     // caller scores the same predictions by label.
@@ -171,10 +159,7 @@ fn an_observed_output_without_an_error_model_is_reported_by_label() -> Result<()
     let subject = &data.subjects()[0];
 
     // `effect` is observed, but has no error model.
-    let mut error_models = OutputModels::new().add(
-        "cp",
-        AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.5),
-    )?;
+    let mut error_models = OutputModels::new().with("cp", OutputModel::assay([1.0]).additive(0.5));
 
     let unknown_effect = |error: &ErrorModelError| matches!(error, ErrorModelError::UnknownOutputLabel(label) if label == "effect");
 
@@ -195,10 +180,8 @@ fn error_model_for_undeclared_output_is_rejected() -> Result<(), PharmsolError> 
     let ode = two_output_ode();
     let data = observed_data();
     let subject = &data.subjects()[0];
-    let error_models = OutputModels::new().add(
-        "concentration",
-        AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.5),
-    )?;
+    let error_models =
+        OutputModels::new().with("concentration", OutputModel::assay([1.0]).additive(0.5));
 
     let result = ode.log_likelihood(subject, &parameters(&ode), &error_models);
     assert!(
@@ -215,10 +198,8 @@ fn residual_error_models_score_by_label() -> Result<(), PharmsolError> {
     let parameters = parameters(&ode);
 
     let residual_error_models = OutputModels::new()
-        .add("effect", ResidualErrorModel::proportional(0.1))
-        .unwrap()
-        .add("cp", ResidualErrorModel::constant(0.5))
-        .unwrap();
+        .with("effect", ResidualErrorModel::proportional(0.1))
+        .with("cp", ResidualErrorModel::constant(0.5));
 
     let batch = log_likelihood_batch(
         &ode,
@@ -234,7 +215,9 @@ fn residual_error_models_score_by_label() -> Result<(), PharmsolError> {
         .iter()
         .filter_map(|prediction| {
             let obs = prediction.observation()?;
-            let model = residual_error_models.get(prediction.outeq())?.residual()?;
+            let model = residual_error_models
+                .get(prediction.outeq())?
+                .as_residual()?;
             Some(model.log_likelihood(obs, prediction.prediction()))
         })
         .sum();
@@ -254,10 +237,8 @@ fn single_subject_residual_scoring_matches_the_batch() -> Result<(), PharmsolErr
         ndarray::Array2::from_shape_vec((1, 2), parameters.as_slice().to_vec()).unwrap();
 
     let mut residual_error_models = OutputModels::new()
-        .add("cp", ResidualErrorModel::constant(0.5))
-        .unwrap()
-        .add("effect", ResidualErrorModel::proportional(0.1))
-        .unwrap();
+        .with("cp", ResidualErrorModel::constant(0.5))
+        .with("effect", ResidualErrorModel::proportional(0.1));
 
     let single = log_likelihood_subject(&ode, subject, &parameters, &residual_error_models);
     let batch = log_likelihood_batch(&ode, &data, &parameter_matrix, &residual_error_models)?;
@@ -266,7 +247,7 @@ fn single_subject_residual_scoring_matches_the_batch() -> Result<(), PharmsolErr
 
     // A parametric algorithm re-estimates sigma per output between iterations.
     for (_, model) in residual_error_models.iter_mut() {
-        let residual = model.residual_mut().unwrap();
+        let residual = model.as_residual_mut().unwrap();
         *residual = residual.with_updated_sigma(residual.primary_parameter() * 2.0);
     }
     let updated = log_likelihood_subject(&ode, subject, &parameters, &residual_error_models);
@@ -277,9 +258,7 @@ fn single_subject_residual_scoring_matches_the_batch() -> Result<(), PharmsolErr
     );
 
     // The single-subject entry point reports an undeclared label as -inf.
-    let undeclared = OutputModels::new()
-        .add("concentration", ResidualErrorModel::constant(0.5))
-        .unwrap();
+    let undeclared = OutputModels::new().with("concentration", ResidualErrorModel::constant(0.5));
     assert_eq!(
         log_likelihood_subject(&ode, subject, &parameters, &undeclared),
         f64::NEG_INFINITY
@@ -289,10 +268,7 @@ fn single_subject_residual_scoring_matches_the_batch() -> Result<(), PharmsolErr
 
 #[test]
 fn error_models_serialize_as_a_label_map() -> Result<(), PharmsolError> {
-    let error_models = OutputModels::new().add(
-        "cp",
-        AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.5),
-    )?;
+    let error_models = OutputModels::new().with("cp", OutputModel::assay([1.0]).additive(0.5));
 
     let json = serde_json::to_value(&error_models).expect("serializes");
     assert!(json.get("cp").is_some(), "keyed by label, got {json}");
@@ -307,22 +283,21 @@ fn error_models_serialize_as_a_label_map() -> Result<(), PharmsolError> {
 
 #[test]
 fn outputs_can_mix_assay_and_residual_error() -> Result<(), PharmsolError> {
-    use pharmsol::{Family, OutputModel};
+    use pharmsol::OutputModel;
 
     let ode = two_output_ode();
     let data = observed_data();
     let subject = data.subjects()[0];
     let parameters = parameters(&ode);
 
-    let assay = AssayErrorModel::additive(ErrorPoly::new(0.5, 0.0, 0.0, 0.0), 0.0);
-    let residual = OutputModel::new(ResidualErrorModel::proportional(0.1))
-        .with_family(Family::student_t(5.0)?);
+    let assay = OutputModel::assay([0.5]);
+    let residual = OutputModel::proportional(0.1).student_t(5.0);
     let mixed = OutputModels::new()
-        .add("cp", assay.clone())?
-        .add("effect", residual)?;
+        .with("cp", assay.clone())
+        .with("effect", residual);
     let assay_only = OutputModels::new()
-        .add("cp", assay.clone())?
-        .add("effect", assay)?;
+        .with("cp", assay.clone())
+        .with("effect", assay);
 
     // Each observation is scored by its own output's model.
     let predictions = ode.predict(subject, &parameters)?;

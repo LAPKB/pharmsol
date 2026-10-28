@@ -171,18 +171,13 @@ impl From<Array2<SubjectPredictions>> for PopulationPredictions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::error_model::{AssayErrorModel, ErrorPoly};
     use crate::data::event::{Observation, OutputLabel};
     use crate::data::output_model::OutputModels;
     use crate::Censor;
+    use crate::OutputModel;
 
     fn create_error_models() -> OutputModels {
-        OutputModels::new()
-            .add(
-                0,
-                AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
-            )
-            .unwrap()
+        OutputModels::new().with(0, OutputModel::assay([0.0, 1.0]))
     }
 
     #[test]
@@ -206,8 +201,8 @@ mod tests {
         let obs = Observation::new(0.0, Some(1.0), 0, None, 0, Censor::None);
         preds.add_prediction(obs.to_prediction(1.0, vec![]));
 
-        let error_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0);
-        let errors = OutputModels::new().add(0, error_model).unwrap();
+        let error_model = OutputModel::assay([1.0]);
+        let errors = OutputModels::new().with(0, error_model);
 
         let log_lik = preds.log_likelihood(&errors).unwrap();
         assert!(log_lik.is_finite());

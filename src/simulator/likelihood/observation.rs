@@ -45,6 +45,15 @@ pub trait ObservationModel: Send + Sync {
     /// up front.
     fn labels(&self) -> Box<dyn Iterator<Item = &OutputLabel> + '_>;
 
+    /// Check the model's own settings, e.g. distribution parameters.
+    ///
+    /// Equations call this, with [`Self::labels`], before simulating, so a
+    /// model can be built without error handling and still fail up front.
+    /// The default accepts everything.
+    fn validate(&self) -> Result<(), PharmsolError> {
+        Ok(())
+    }
+
     /// A hash of everything that changes [`Self::log_density`].
     ///
     /// Likelihood caches (see [`SDE`](crate::SDE)) key on it, so two models

@@ -93,6 +93,27 @@ pub struct ErrorPoly {
     c3: f64,
 }
 
+/// Leading coefficients, lowest degree first; the rest are zero.
+///
+/// ```rust
+/// use pharmsol::ErrorPoly;
+///
+/// assert_eq!(ErrorPoly::from([0.0, 0.1]), ErrorPoly::new(0.0, 0.1, 0.0, 0.0));
+/// ```
+impl<const N: usize> From<[f64; N]> for ErrorPoly {
+    fn from(coefficients: [f64; N]) -> Self {
+        const {
+            assert!(
+                N >= 1 && N <= 4,
+                "an error polynomial has one to four coefficients"
+            )
+        };
+        let mut c = [0.0; 4];
+        c[..N].copy_from_slice(&coefficients);
+        Self::new(c[0], c[1], c[2], c[3])
+    }
+}
+
 impl ErrorPoly {
     pub fn new(c0: f64, c1: f64, c2: f64, c3: f64) -> Self {
         Self { c0, c1, c2, c3 }
@@ -197,33 +218,68 @@ pub enum AssayErrorModel {
 }
 
 impl AssayErrorModel {
-    /// Additive assay error, `σ = sqrt(α² + λ²)`.
+    /// Assay error with this polynomial and nothing added: additive with
+    /// λ = 0 (estimated, unless [fixed](Self::fixed)).
     ///
-    /// A plain `f64` lambda is estimated; pass [`Factor::Fixed`] to fix it.
+    /// Usually reached through [`OutputModel::assay`](crate::OutputModel::assay)
+    /// and finished with [`Self::additive`] or [`Self::multiplicative`].
     ///
     /// ```rust
     /// use pharmsol::prelude::*;
-    /// use pharmsol::data::error_model::Factor;
     ///
-    /// let poly = ErrorPoly::new(0.0, 0.1, 0.0, 0.0);
-    /// assert!(AssayErrorModel::additive(poly, 0.5).optimize());
-    /// assert!(!AssayErrorModel::additive(poly, Factor::Fixed(0.5)).optimize());
+    /// let additive = OutputModel::assay([0.0, 0.1]).additive(0.5);
+    /// assert!(additive.optimize());
+    /// let fixed = OutputModel::assay([0.0, 0.1]).multiplicative(1.5).fixed();
+    /// assert!(!fixed.optimize());
     /// ```
-    pub fn additive(poly: ErrorPoly, lambda: impl Into<Factor>) -> Self {
+    pub fn new(poly: impl Into<ErrorPoly>) -> Self {
         Self::Additive {
-            lambda: lambda.into(),
-            poly,
+            lambda: Factor::Variable(0.0),
+            poly: poly.into(),
         }
     }
 
-    /// Multiplicative assay error, `σ = γ·α`.
+    /// Make this additive assay error, `σ = sqrt(α² + λ²)`, keeping the
+    /// polynomial.
     ///
-    /// A plain `f64` gamma is estimated; pass [`Factor::Fixed`] to fix it.
-    pub fn multiplicative(poly: ErrorPoly, gamma: impl Into<Factor>) -> Self {
+    /// A plain `f64` lambda is estimated; chain [`Self::fixed`] (or pass a
+    /// [`Factor::Fixed`]) to fix it.
+    pub fn additive(self, lambda: impl Into<Factor>) -> Self {
+        Self::Additive {
+            lambda: lambda.into(),
+            poly: self.errorpoly(),
+        }
+    }
+
+    /// Make this multiplicative assay error, `σ = γ·α`, keeping the
+    /// polynomial.
+    ///
+    /// A plain `f64` gamma is estimated; chain [`Self::fixed`] (or pass a
+    /// [`Factor::Fixed`]) to fix it.
+    pub fn multiplicative(self, gamma: impl Into<Factor>) -> Self {
         Self::Multiplicative {
             gamma: gamma.into(),
-            poly,
+            poly: self.errorpoly(),
         }
+    }
+
+    /// Fix the factor (λ or γ) at its current value, so it is not estimated.
+    pub fn fixed(mut self) -> Self {
+        self.fix_factor();
+        self
+    }
+
+    /// An [`OutputModel`](crate::OutputModel) with this assay error and
+    /// Student's t-distributed observations; see
+    /// [`OutputModel::student_t`](crate::OutputModel::student_t).
+    pub fn student_t(self, nu: f64) -> crate::OutputModel {
+        crate::OutputModel::from(self).student_t(nu)
+    }
+
+    /// An [`OutputModel`](crate::OutputModel) with this assay error,
+    /// compared on the log scale; see [`OutputModel::log`](crate::OutputModel::log).
+    pub fn log(self) -> crate::OutputModel {
+        crate::OutputModel::from(self).log()
     }
 
     fn factor_ref(&self) -> &Factor {
@@ -390,7 +446,7 @@ pub enum ErrorModelError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::output_model::OutputModels;
+    use crate::data::output_model::{OutputModel, OutputModels};
     use crate::{Censor, Observation};
 
     fn poly(c0: f64) -> ErrorPoly {
@@ -411,21 +467,21 @@ mod tests {
     #[test]
     fn additive_and_multiplicative_sigma() {
         let observed = prediction(Some(20.0), None);
-        let additive = AssayErrorModel::additive(poly(1.0), 5.0);
+        let additive = OutputModel::assay(poly(1.0)).additive(5.0);
         assert_eq!(additive.sigma(&observed).unwrap(), 26.0_f64.sqrt());
         assert!((additive.variance(&observed).unwrap() - 26.0).abs() < 1e-12);
 
-        let multiplicative = AssayErrorModel::multiplicative(poly(1.0), 2.0);
+        let multiplicative = OutputModel::assay(poly(1.0)).multiplicative(2.0);
         assert_eq!(multiplicative.sigma(&observed).unwrap(), 2.0);
 
         // The polynomial is evaluated at the observation, not the prediction.
-        let linear = AssayErrorModel::multiplicative(ErrorPoly::new(0.0, 0.1, 0.0, 0.0), 1.0);
+        let linear = OutputModel::assay([0.0, 0.1]).multiplicative(1.0);
         assert!((linear.sigma(&observed).unwrap() - 2.0).abs() < 1e-12);
     }
 
     #[test]
     fn an_observation_polynomial_overrides_the_model_polynomial() {
-        let model = AssayErrorModel::multiplicative(poly(1.0), 2.0);
+        let model = OutputModel::assay(poly(1.0)).multiplicative(2.0);
         assert_eq!(
             model
                 .sigma(&prediction(Some(20.0), Some(poly(3.0))))
@@ -436,7 +492,7 @@ mod tests {
 
     #[test]
     fn sigma_needs_an_observation() {
-        let model = AssayErrorModel::additive(poly(1.0), 5.0);
+        let model = OutputModel::assay(poly(1.0)).additive(5.0);
         assert!(matches!(
             model.sigma(&prediction(None, None)),
             Err(ErrorModelError::MissingObservation)
@@ -445,17 +501,17 @@ mod tests {
 
     #[test]
     fn invalid_sigmas_are_errors() {
-        let negative = AssayErrorModel::multiplicative(poly(1.0), -1.0);
+        let negative = OutputModel::assay(poly(1.0)).multiplicative(-1.0);
         assert!(matches!(
             negative.sigma(&prediction(Some(1.0), None)),
             Err(ErrorModelError::NegativeSigma)
         ));
-        let infinite = AssayErrorModel::multiplicative(poly(f64::INFINITY), 1.0);
+        let infinite = OutputModel::assay(poly(f64::INFINITY)).multiplicative(1.0);
         assert!(matches!(
             infinite.sigma(&prediction(Some(1.0), None)),
             Err(ErrorModelError::NonFiniteSigma)
         ));
-        let zero = AssayErrorModel::multiplicative(poly(0.0), 1.0);
+        let zero = OutputModel::assay(poly(0.0)).multiplicative(1.0);
         assert_eq!(zero.sigma(&prediction(Some(1.0), None)).unwrap(), 0.0);
         assert!(matches!(
             zero.sigma_from_value(1.0),
@@ -465,16 +521,16 @@ mod tests {
 
     #[test]
     fn sigma_from_value_uses_the_model_polynomial() {
-        let additive = AssayErrorModel::additive(poly(1.0), 5.0);
+        let additive = OutputModel::assay(poly(1.0)).additive(5.0);
         assert_eq!(additive.sigma_from_value(20.0).unwrap(), 26.0_f64.sqrt());
         assert!((additive.variance_from_value(20.0).unwrap() - 26.0).abs() < 1e-12);
-        let multiplicative = AssayErrorModel::multiplicative(poly(1.0), 2.0);
+        let multiplicative = OutputModel::assay(poly(1.0)).multiplicative(2.0);
         assert_eq!(multiplicative.sigma_from_value(20.0).unwrap(), 2.0);
     }
 
     #[test]
     fn errorpoly_can_be_read_and_replaced() {
-        let mut model = AssayErrorModel::additive(ErrorPoly::new(1.0, 2.0, 3.0, 4.0), 5.0);
+        let mut model = OutputModel::assay([1.0, 2.0, 3.0, 4.0]).additive(5.0);
         assert_eq!(model.errorpoly().coefficients(), (1.0, 2.0, 3.0, 4.0));
         model.set_errorpoly(ErrorPoly::new(5.0, 6.0, 7.0, 8.0));
         assert_eq!(model.errorpoly().coefficients(), (5.0, 6.0, 7.0, 8.0));
@@ -483,28 +539,30 @@ mod tests {
     #[test]
     fn a_plain_factor_is_variable_and_factor_fixed_is_fixed() {
         for model in [
-            AssayErrorModel::additive(poly(1.0), 5.0),
-            AssayErrorModel::multiplicative(poly(1.0), 5.0),
+            OutputModel::assay(poly(1.0)).additive(5.0),
+            OutputModel::assay(poly(1.0)).multiplicative(5.0),
         ] {
             assert_eq!(model.factor(), 5.0);
             assert!(!model.is_factor_fixed());
             assert!(model.optimize());
         }
         for model in [
-            AssayErrorModel::additive(poly(1.0), Factor::Fixed(5.0)),
-            AssayErrorModel::multiplicative(poly(1.0), Factor::Fixed(5.0)),
+            OutputModel::assay(poly(1.0)).additive(5.0).fixed(),
+            OutputModel::assay(poly(1.0)).multiplicative(5.0).fixed(),
         ] {
             assert_eq!(model.factor(), 5.0);
             assert!(model.is_factor_fixed());
             assert!(!model.optimize());
         }
-        assert!(AssayErrorModel::additive(poly(1.0), 1.0).is_additive());
-        assert!(AssayErrorModel::multiplicative(poly(1.0), 1.0).is_multiplicative());
+        assert!(OutputModel::assay(poly(1.0)).additive(1.0).is_additive());
+        assert!(OutputModel::assay(poly(1.0))
+            .multiplicative(1.0)
+            .is_multiplicative());
     }
 
     #[test]
     fn factor_value_and_state_change_independently() {
-        let mut model = AssayErrorModel::multiplicative(poly(1.0), 2.0);
+        let mut model = OutputModel::assay(poly(1.0)).multiplicative(2.0);
         model.set_factor(4.0);
         assert_eq!(model.factor_param(), Factor::Variable(4.0));
 
@@ -538,13 +596,13 @@ mod tests {
 
     #[test]
     fn hash_covers_type_value_state_and_polynomial() {
-        let base = AssayErrorModel::additive(poly(1.0), 5.0);
+        let base = OutputModel::assay(poly(1.0)).additive(5.0);
         assert_eq!(hash(&base), hash(&base.clone()));
         for other in [
-            AssayErrorModel::multiplicative(poly(1.0), 5.0),
-            AssayErrorModel::additive(poly(1.0), 10.0),
-            AssayErrorModel::additive(poly(1.0), Factor::Fixed(5.0)),
-            AssayErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 5.0),
+            OutputModel::assay(poly(1.0)).multiplicative(5.0),
+            OutputModel::assay(poly(1.0)).additive(10.0),
+            OutputModel::assay(poly(1.0)).additive(5.0).fixed(),
+            OutputModel::assay([1.0, 0.1]).additive(5.0),
         ] {
             assert_ne!(hash(&base), hash(&other), "{other:?}");
         }
@@ -552,14 +610,12 @@ mod tests {
 
     #[test]
     fn models_are_reached_by_exact_label() {
-        let mut models = OutputModels::new()
-            .add(1, AssayErrorModel::multiplicative(poly(1.0), 2.0))
-            .unwrap();
+        let mut models =
+            OutputModels::new().with(1, OutputModel::assay(poly(1.0)).multiplicative(2.0));
         assert!(matches!(
             OutputModels::new()
-                .add("cp", AssayErrorModel::additive(poly(1.0), 5.0))
-                .unwrap()
-                .add("cp", AssayErrorModel::multiplicative(poly(2.0), 3.0)),
+                .with("cp", OutputModel::assay(poly(1.0)).additive(5.0))
+                .add("cp", OutputModel::assay(poly(2.0)).multiplicative(3.0)),
             Err(ErrorModelError::ExistingOutputLabel(label)) if label == "cp"
         ));
 
@@ -579,9 +635,14 @@ mod tests {
 
         // Iterating `&mut` reaches every model, as an optimizer loop would.
         for (_, model) in &mut models {
-            model.assay_mut().unwrap().fix_factor();
+            model.as_assay_mut().unwrap().fix_factor();
         }
-        assert!(models.get("1").unwrap().assay().unwrap().is_factor_fixed());
+        assert!(models
+            .get("1")
+            .unwrap()
+            .as_assay()
+            .unwrap()
+            .is_factor_fixed());
         assert_eq!((&models).into_iter().count(), 1);
         assert_eq!(models.into_iter().count(), 1);
     }

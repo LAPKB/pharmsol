@@ -50,10 +50,7 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
 
     // Define the assay error models once by label and reuse them across both
     // equations.
-    let ems = OutputModels::new().add(
-        "cp",
-        AssayErrorModel::additive(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.0),
-    )?;
+    let ems = OutputModels::new().with("cp", OutputModel::assay([0.0, 0.05]));
 
     // Define the parameter values for the simulations
     let ke = 1.022; // Elimination rate constant

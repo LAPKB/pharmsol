@@ -66,12 +66,7 @@ fn sde(nparticles: usize) -> SDE {
 const P: [f64; 3] = [0.5, 10.0, 0.0];
 
 fn error_models() -> OutputModels {
-    OutputModels::new()
-        .add(
-            0,
-            AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0),
-        )
-        .unwrap()
+    OutputModels::new().with(0, OutputModel::assay([1.0]))
 }
 
 fn assert_err_contains<T: std::fmt::Debug>(result: Result<T, PharmsolError>, needle: &str) {

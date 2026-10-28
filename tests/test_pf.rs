@@ -1,4 +1,3 @@
-use pharmsol::data::error_model::AssayErrorModel;
 use pharmsol::*;
 
 /// Test the particle filter (SDE) likelihood estimation
@@ -52,10 +51,7 @@ fn test_particle_filter_likelihood() {
         .expect("particle filter metadata should validate");
 
     let ems = OutputModels::default()
-        .add(
-            "cp",
-            AssayErrorModel::additive(ErrorPoly::new(0.5, 0.0, 0.0, 0.0), 0.0),
-        )
+        .add("cp", OutputModel::assay([0.5]))
         .unwrap();
 
     // Run the particle filter multiple times to get statistics

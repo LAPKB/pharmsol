@@ -25,21 +25,14 @@ fn subject() -> Subject {
 const PARAMETERS: [(&str, f64); 2] = [("ke", 0.2), ("v", 20.0)];
 
 fn cp_error_models() -> OutputModels {
-    OutputModels::new()
-        .add(
-            "cp",
-            AssayErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 0.5),
-        )
-        .expect("cp error model")
+    OutputModels::new().with("cp", OutputModel::assay([1.0, 0.1]).additive(0.5))
 }
 
 fn undeclared_error_models() -> OutputModels {
-    OutputModels::new()
-        .add(
-            "concentration",
-            AssayErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 0.5),
-        )
-        .expect("concentration error model")
+    OutputModels::new().with(
+        "concentration",
+        OutputModel::assay([1.0, 0.1]).additive(0.5),
+    )
 }
 
 fn assert_unknown_label<T: std::fmt::Debug>(
@@ -222,7 +215,7 @@ fn assert_sde_cache_sees_polynomial_changes(
     // Change only the polynomial; gamma/lambda and its fixed state stay put.
     error_models
         .get_mut("cp")
-        .and_then(OutputModel::assay_mut)
+        .and_then(OutputModel::as_assay_mut)
         .expect("cp has assay error")
         .set_errorpoly(ErrorPoly::new(5.0, 0.0, 0.0, 0.0));
     let after = sde.log_likelihood(&subject, &parameters, &error_models)?;
@@ -272,16 +265,16 @@ fn equations_without_metadata_accept_only_existing_output_numbers() -> Result<()
         .observation(1.0, 4.0, 0)
         .build();
     let parameters = [0.2, 20.0];
-    let error_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 0.5);
+    let error_model = OutputModel::assay([1.0, 0.1]).additive(0.5);
 
-    let by_position = OutputModels::new().add(0, error_model.clone())?;
+    let by_position = OutputModels::new().with(0, error_model.clone());
     assert!(ode
         .log_likelihood(&subject, &parameters, &by_position)?
         .is_finite());
 
     // There is no second output, and an equation without metadata has no names.
     for label in ["1", "cp"] {
-        let error_models = OutputModels::new().add(label, error_model.clone())?;
+        let error_models = OutputModels::new().with(label, error_model.clone());
         assert_unknown_label(
             &format!("label `{label}`"),
             ode.log_likelihood(&subject, &parameters, &error_models),

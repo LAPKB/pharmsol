@@ -224,9 +224,9 @@ pub fn log_likelihood_subject<O: ObservationModel + ?Sized>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::error_model::{AssayErrorModel, ErrorPoly};
     use crate::data::event::{Observation, OutputLabel};
     use crate::Censor;
+    use crate::OutputModel;
 
     #[test]
     fn test_log_likelihood_equals_log_of_likelihood() {
@@ -243,12 +243,7 @@ mod tests {
         };
 
         // Create error model with additive error
-        let error_models = crate::OutputModels::new()
-            .add(
-                0,
-                AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
-            )
-            .unwrap();
+        let error_models = crate::OutputModels::new().with(0, OutputModel::assay([0.0, 1.0]));
 
         #[allow(deprecated)]
         let lik = prediction.likelihood(&error_models).unwrap();
@@ -290,12 +285,7 @@ mod tests {
         ];
 
         let subject_predictions = SubjectPredictions::from(predictions);
-        let error_models = crate::OutputModels::new()
-            .add(
-                0,
-                AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
-            )
-            .unwrap();
+        let error_models = crate::OutputModels::new().with(0, OutputModel::assay([0.0, 1.0]));
 
         #[allow(deprecated)]
         let lik = subject_predictions.likelihood(&error_models).unwrap();
@@ -324,8 +314,8 @@ mod tests {
         let obs = Observation::new(0.0, Some(1.0), 0, None, 0, Censor::None);
         preds.add_prediction(obs.to_prediction(1.0, vec![]));
 
-        let error_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0);
-        let errors = crate::OutputModels::new().add(0, error_model).unwrap();
+        let error_model = OutputModel::assay([1.0]);
+        let errors = crate::OutputModels::new().with(0, error_model);
 
         let log_lik = preds.log_likelihood(&errors).unwrap();
         assert!(log_lik.is_finite());

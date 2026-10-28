@@ -147,12 +147,7 @@ pub fn support_points(workload: Workload, n: usize) -> Array2<f64> {
 
 /// Assay error model for `log_likelihood` / `log_likelihood_matrix`.
 pub fn assay_error_models() -> OutputModels {
-    OutputModels::new()
-        .add(
-            "plasma",
-            AssayErrorModel::additive(ErrorPoly::new(0.1, 0.1, 0.0, 0.0), 0.0),
-        )
-        .expect("plasma assay error model")
+    OutputModels::new().with("plasma", OutputModel::assay([0.1, 0.1]))
 }
 
 // ───────────────────────────── Macro factories ───────────────────────

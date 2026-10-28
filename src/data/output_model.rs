@@ -1,7 +1,49 @@
 //! Observation models, one per output.
 //!
 //! An [`OutputModel`] says how an output's observations are distributed around
-//! the model's predictions. It is built from three independent choices:
+//! the model's predictions, and [`OutputModels`] holds one per output label.
+//! `OutputModels` is the [`ObservationModel`] every likelihood in pharmsol is
+//! computed with.
+//!
+//! ```rust
+//! use pharmsol::prelude::*;
+//!
+//! let models = OutputModels::new()
+//!     // Assay error from the assay's polynomial [c0, c1], plus lambda = 0.5.
+//!     .with("cp", OutputModel::assay([0.0, 0.1]).additive(0.5))
+//!     // Heavy-tailed combined residual error.
+//!     .with("effect", OutputModel::combined(0.5, 0.1).student_t(4.0))
+//!     // Exponential error: constant sigma 0.2 on the log scale.
+//!     .with("metabolite", OutputModel::exponential(0.2));
+//! assert_eq!(models.len(), 3);
+//! ```
+//!
+//! # Building a model
+//!
+//! Start from where sigma comes from:
+//!
+//! | Constructor | Sigma |
+//! |---|---|
+//! | [`OutputModel::assay`]`(poly)` | the assay's polynomial `α(y)` at the **observation** |
+//! | `… .additive(λ)` | `sqrt(α² + λ²)` (the default, with λ = 0) |
+//! | `… .multiplicative(γ)` | `γ·α` |
+//! | [`OutputModel::constant`]`(a)` | `a` |
+//! | [`OutputModel::proportional`]`(b)` | `b·|f|`, at the **prediction** |
+//! | [`OutputModel::combined`]`(a, b)` | `sqrt(a² + b²·f²)` |
+//! | [`OutputModel::exponential`]`(σ)` | `σ` on the log scale |
+//!
+//! Then optionally change the distribution with `.student_t(nu)` (normal by
+//! default) or compare on the log scale with `.log()`. Assay factors are
+//! estimated unless `.fixed()`.
+//!
+//! Building never fails. Each model is checked when it is used: an output
+//! the equation does not declare, or invalid degrees of freedom, is an error
+//! before anything is simulated.
+//!
+//! # The parts
+//!
+//! Every model is three independent choices, which [`OutputModel::scale`],
+//! [`OutputModel::family`] and [`OutputModel::transform`] return:
 //!
 //! - [`Scale`]: where sigma comes from. [`Scale::Observation`] computes it
 //!   from the observed value with an [`AssayErrorModel`] (assay error, the
@@ -9,36 +51,11 @@
 //!   [`Scale::Prediction`] computes it from the prediction with a
 //!   [`ResidualErrorModel`] (residual error, the usual choice for parametric
 //!   algorithms such as SAEM and FOCE).
-//! - [`Family`]: the distribution: [`Family::Normal`] (the default),
-//!   or [`Family::StudentT`] for heavy tails.
-//! - [`Transform`]: the scale observation and prediction are compared on:
-//!   [`Transform::Identity`] (the default) or [`Transform::Log`].
+//! - [`Family`]: [`Family::Normal`] or [`Family::StudentT`].
+//! - [`Transform`]: [`Transform::Identity`] or [`Transform::Log`].
 //!
 //! Censored observations (BLOQ, ALOQ) use the family's CDF or survival
 //! function, whatever the scale.
-//!
-//! [`OutputModels`] collects one [`OutputModel`] per output label and is the
-//! [`ObservationModel`] every likelihood in pharmsol is computed with. Outputs
-//! in one collection can mix scales, families and transforms.
-//!
-//! ```rust
-//! use pharmsol::prelude::*;
-//! use pharmsol::{Family, OutputModel, ResidualErrorModel};
-//!
-//! let models = OutputModels::new()
-//!     // Assay error on the concentration.
-//!     .add("cp", AssayErrorModel::additive(ErrorPoly::new(0.0, 0.1, 0.0, 0.0), 0.5))?
-//!     // Heavy-tailed residual error on the effect.
-//!     .add(
-//!         "effect",
-//!         OutputModel::new(ResidualErrorModel::combined(0.5, 0.1))
-//!             .with_family(Family::student_t(4.0)?),
-//!     )?
-//!     // Exponential error: constant sigma on the log scale.
-//!     .add("metabolite", OutputModel::exponential(0.2))?;
-//! assert_eq!(models.len(), 3);
-//! # Ok::<(), pharmsol::data::error_model::ErrorModelError>(())
-//! ```
 
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
@@ -160,59 +177,29 @@ pub enum Family {
     /// than the normal, so outliers weigh less. Approaches the normal as
     /// `nu` grows. Sigma is the scale parameter, not the standard deviation.
     StudentT {
-        /// Degrees of freedom.
-        nu: DegreesOfFreedom,
+        /// Degrees of freedom, positive and finite. Checked when the model
+        /// is used (see [`ObservationModel::validate`]), not when it is built.
+        nu: f64,
     },
-}
-
-/// Degrees of freedom of a [`Family::StudentT`]: positive and finite.
-///
-/// Built with [`DegreesOfFreedom::new`] (or [`Family::student_t`]), so an
-/// invalid value cannot reach a density.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-#[serde(try_from = "f64", into = "f64")]
-pub struct DegreesOfFreedom(f64);
-
-impl DegreesOfFreedom {
-    /// Errors unless `nu` is positive and finite.
-    pub fn new(nu: f64) -> Result<Self, ErrorModelError> {
-        if nu > 0.0 && nu.is_finite() {
-            Ok(Self(nu))
-        } else {
-            Err(ErrorModelError::InvalidFamily(format!(
-                "Student's t needs finite nu > 0, got {nu}"
-            )))
-        }
-    }
-
-    /// The value.
-    pub fn value(&self) -> f64 {
-        self.0
-    }
-}
-
-impl TryFrom<f64> for DegreesOfFreedom {
-    type Error = ErrorModelError;
-
-    fn try_from(nu: f64) -> Result<Self, Self::Error> {
-        Self::new(nu)
-    }
-}
-
-impl From<DegreesOfFreedom> for f64 {
-    fn from(nu: DegreesOfFreedom) -> Self {
-        nu.0
-    }
 }
 
 impl Family {
     /// Student's t-distribution with `nu` degrees of freedom.
-    ///
-    /// Errors unless `nu` is positive and finite.
-    pub fn student_t(nu: f64) -> Result<Self, ErrorModelError> {
-        Ok(Family::StudentT {
-            nu: DegreesOfFreedom::new(nu)?,
-        })
+    pub fn student_t(nu: f64) -> Self {
+        Family::StudentT { nu }
+    }
+
+    /// Errors with [`ErrorModelError::InvalidFamily`] unless the family's
+    /// parameters are valid.
+    pub fn validate(&self) -> Result<(), ErrorModelError> {
+        match *self {
+            Family::StudentT { nu } if !(nu > 0.0 && nu.is_finite()) => {
+                Err(ErrorModelError::InvalidFamily(format!(
+                    "Student's t needs finite nu > 0, got {nu}"
+                )))
+            }
+            _ => Ok(()),
+        }
     }
 
     /// Log-density of `y` given location `f` and scale `sigma`.
@@ -220,7 +207,10 @@ impl Family {
     pub fn log_pdf(&self, y: f64, f: f64, sigma: f64) -> Result<f64, ErrorModelError> {
         match *self {
             Family::Normal => Ok(distributions::lognormpdf(y, f, sigma)),
-            Family::StudentT { nu } => distributions::log_t_pdf(y, f, sigma, nu.value()),
+            Family::StudentT { nu } => {
+                self.validate()?;
+                distributions::log_t_pdf(y, f, sigma, nu)
+            }
         }
     }
 
@@ -229,7 +219,10 @@ impl Family {
     pub fn log_cdf(&self, y: f64, f: f64, sigma: f64) -> Result<f64, ErrorModelError> {
         match *self {
             Family::Normal => distributions::lognormcdf(y, f, sigma),
-            Family::StudentT { nu } => distributions::log_t_cdf(y, f, sigma, nu.value()),
+            Family::StudentT { nu } => {
+                self.validate()?;
+                distributions::log_t_cdf(y, f, sigma, nu)
+            }
         }
     }
 
@@ -239,7 +232,10 @@ impl Family {
     pub fn log_sf(&self, y: f64, f: f64, sigma: f64) -> Result<f64, ErrorModelError> {
         match *self {
             Family::Normal => distributions::lognormccdf(y, f, sigma),
-            Family::StudentT { nu } => distributions::log_t_sf(y, f, sigma, nu.value()),
+            Family::StudentT { nu } => {
+                self.validate()?;
+                distributions::log_t_sf(y, f, sigma, nu)
+            }
         }
     }
 }
@@ -284,6 +280,10 @@ pub struct OutputModel {
 
 impl OutputModel {
     /// A normal, untransformed model with this scale.
+    ///
+    /// The named constructors ([`Self::assay`], [`Self::constant`],
+    /// [`Self::proportional`], [`Self::combined`], [`Self::exponential`])
+    /// cover the usual models.
     pub fn new(scale: impl Into<Scale>) -> Self {
         Self {
             scale: scale.into(),
@@ -292,12 +292,61 @@ impl OutputModel {
         }
     }
 
+    /// Assay error: sigma from the observed value, through the assay's
+    /// error polynomial (lowest degree first, e.g. `[c0, c1]`).
+    ///
+    /// Returns the [`AssayErrorModel`], additive with λ = 0 until finished
+    /// with [`AssayErrorModel::additive`] or
+    /// [`AssayErrorModel::multiplicative`]; it converts into an
+    /// `OutputModel` wherever one is expected.
+    ///
+    /// ```rust
+    /// use pharmsol::prelude::*;
+    ///
+    /// let models = OutputModels::new()
+    ///     .with("cp", OutputModel::assay([0.0, 0.1]).additive(0.5))
+    ///     .with("pd", OutputModel::assay([0.01, 0.1]).multiplicative(1.5).fixed())
+    ///     .with("met", OutputModel::assay([0.0, 0.1]).student_t(4.0));
+    /// assert_eq!(models.len(), 3);
+    /// ```
+    pub fn assay(poly: impl Into<ErrorPoly>) -> AssayErrorModel {
+        AssayErrorModel::new(poly)
+    }
+
+    /// Constant residual error, `σ = a`.
+    pub fn constant(a: f64) -> Self {
+        Self::new(ResidualErrorModel::constant(a))
+    }
+
+    /// Proportional residual error, `σ = b·|f|`.
+    pub fn proportional(b: f64) -> Self {
+        Self::new(ResidualErrorModel::proportional(b))
+    }
+
+    /// Combined residual error, `σ = sqrt(a² + b²·f²)`.
+    pub fn combined(a: f64, b: f64) -> Self {
+        Self::new(ResidualErrorModel::combined(a, b))
+    }
+
     /// Exponential error: normal with constant `sigma` on the log scale.
     ///
-    /// This is a proportional residual error on a log transform, which the
-    /// delta method makes a constant `sigma` on the log scale.
+    /// The same as `OutputModel::proportional(sigma).log()`: the delta method
+    /// makes a proportional error a constant `sigma` on the log scale.
     pub fn exponential(sigma: f64) -> Self {
-        Self::new(ResidualErrorModel::proportional(sigma)).with_transform(Transform::Log)
+        Self::proportional(sigma).log()
+    }
+
+    /// Student's t-distributed observations with `nu` degrees of freedom,
+    /// for heavy tails. `nu` must be positive and finite; that is checked
+    /// when the model is used.
+    pub fn student_t(self, nu: f64) -> Self {
+        self.with_family(Family::student_t(nu))
+    }
+
+    /// Compare observation and prediction on the log scale; see
+    /// [`Transform::Log`].
+    pub fn log(self) -> Self {
+        self.with_transform(Transform::Log)
     }
 
     /// Use another distribution.
@@ -333,15 +382,15 @@ impl OutputModel {
     }
 
     /// The assay error model, if sigma comes from the observation.
-    pub fn assay(&self) -> Option<&AssayErrorModel> {
+    pub fn as_assay(&self) -> Option<&AssayErrorModel> {
         match &self.scale {
             Scale::Observation(model) => Some(model),
             Scale::Prediction(_) => None,
         }
     }
 
-    /// Mutable [`Self::assay`].
-    pub fn assay_mut(&mut self) -> Option<&mut AssayErrorModel> {
+    /// Mutable [`Self::as_assay`].
+    pub fn as_assay_mut(&mut self) -> Option<&mut AssayErrorModel> {
         match &mut self.scale {
             Scale::Observation(model) => Some(model),
             Scale::Prediction(_) => None,
@@ -349,15 +398,15 @@ impl OutputModel {
     }
 
     /// The residual error model, if sigma comes from the prediction.
-    pub fn residual(&self) -> Option<&ResidualErrorModel> {
+    pub fn as_residual(&self) -> Option<&ResidualErrorModel> {
         match &self.scale {
             Scale::Prediction(model) => Some(model),
             Scale::Observation(_) => None,
         }
     }
 
-    /// Mutable [`Self::residual`].
-    pub fn residual_mut(&mut self) -> Option<&mut ResidualErrorModel> {
+    /// Mutable [`Self::as_residual`].
+    pub fn as_residual_mut(&mut self) -> Option<&mut ResidualErrorModel> {
         match &mut self.scale {
             Scale::Prediction(model) => Some(model),
             Scale::Observation(_) => None,
@@ -448,7 +497,7 @@ impl OutputModel {
             Family::Normal => 0u8.hash(hasher),
             Family::StudentT { nu } => {
                 1u8.hash(hasher);
-                nu.value().to_bits().hash(hasher);
+                nu.to_bits().hash(hasher);
             }
         }
         match self.transform {
@@ -485,18 +534,20 @@ impl From<Scale> for OutputModel {
 /// position (`"0"`, `"1"`, ...), like the observation labels resolved against
 /// them.
 ///
-/// [`Self::factor`] and [`Self::set_factor`] reach the assay factor (λ or γ)
-/// of an output by label, as an NPAG loop does. Anything else about an
+/// [`Self::parameters`] and [`Self::set_parameters`] reach an output's
+/// error parameters by label, assay or residual; [`Self::factor`] and
+/// [`Self::set_factor`] reach just the assay factor (λ or γ), as an NPAG
+/// loop does. Anything else about an
 /// output's model goes through [`Self::get`] or [`Self::get_mut`] and the
 /// [`OutputModel`] accessors.
 ///
 /// ```rust
 /// # use pharmsol::prelude::*;
-/// let mut models = OutputModels::new()
-///     .add("cp", AssayErrorModel::additive(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.5))?;
+/// let mut models =
+///     OutputModels::new().with("cp", OutputModel::assay([0.0, 0.05]).additive(0.5));
 ///
 /// for (label, model) in models.iter_mut() {
-///     if let Some(assay) = model.assay_mut().filter(|assay| assay.optimize()) {
+///     if let Some(assay) = model.as_assay_mut().filter(|assay| assay.optimize()) {
 ///         assay.set_factor(assay.factor() * 2.0);
 ///     }
 ///     assert_eq!(label.as_str(), "cp");
@@ -504,8 +555,8 @@ impl From<Scale> for OutputModel {
 /// assert_eq!(models.factor("cp")?, 1.0);
 ///
 /// models.set_factor("cp", 0.25)?;
-/// models.get_mut("cp").and_then(OutputModel::assay_mut).unwrap().fix_factor();
-/// assert!(!models.get("cp").and_then(OutputModel::assay).unwrap().optimize());
+/// models.get_mut("cp").and_then(OutputModel::as_assay_mut).unwrap().fix_factor();
+/// assert!(!models.get("cp").and_then(OutputModel::as_assay).unwrap().optimize());
 /// # Ok::<(), pharmsol::data::error_model::ErrorModelError>(())
 /// ```
 #[derive(Serialize, Debug, Clone, Deserialize, Default, PartialEq)]
@@ -524,10 +575,18 @@ impl OutputModels {
         Self::default()
     }
 
-    /// Add the model for an output label.
+    /// Set the model for an output label, replacing any model it had.
     ///
     /// Takes anything that converts into an [`OutputModel`], including an
-    /// [`AssayErrorModel`] or a [`ResidualErrorModel`] on its own.
+    /// [`AssayErrorModel`] or a [`ResidualErrorModel`] on its own. Use
+    /// [`Self::add`] to have a repeated label caught instead.
+    pub fn with(mut self, outeq: impl ToString, model: impl Into<OutputModel>) -> Self {
+        self.models.insert(OutputLabel::new(outeq), model.into());
+        self
+    }
+
+    /// Add the model for an output label, like [`Self::with`] but refusing
+    /// to replace one.
     ///
     /// # Errors
     /// [ErrorModelError::ExistingOutputLabel] if a model already exists for
@@ -581,7 +640,7 @@ impl OutputModels {
     fn assay(&self, outeq: impl ToString) -> Result<&AssayErrorModel, ErrorModelError> {
         let label = outeq.to_string();
         self.model_for(&label)?
-            .assay()
+            .as_assay()
             .ok_or(ErrorModelError::NotAssayError(label))
     }
 
@@ -591,7 +650,7 @@ impl OutputModels {
         match self.models.get_mut(label.as_str()) {
             None => Err(ErrorModelError::UnknownOutputLabel(label)),
             Some(model) => model
-                .assay_mut()
+                .as_assay_mut()
                 .ok_or(ErrorModelError::NotAssayError(label)),
         }
     }
@@ -703,11 +762,49 @@ impl ObservationModel for OutputModels {
         Box::new(self.models.keys())
     }
 
+    fn validate(&self) -> Result<(), PharmsolError> {
+        for (label, model) in &self.models {
+            model.family.validate().map_err(|error| match error {
+                ErrorModelError::InvalidFamily(reason) => {
+                    ErrorModelError::InvalidFamily(format!("output `{label}`: {reason}"))
+                }
+                other => other,
+            })?;
+        }
+        Ok(())
+    }
+
     fn cache_key(&self) -> u64 {
         let mut hasher = ahash::AHasher::default();
         CACHE_TAG.hash(&mut hasher);
         self.hash().hash(&mut hasher);
         hasher.finish()
+    }
+}
+
+/// Later entries replace earlier ones for the same label, as in
+/// [`OutputModels::with`].
+impl<L: ToString, M: Into<OutputModel>> FromIterator<(L, M)> for OutputModels {
+    fn from_iter<I: IntoIterator<Item = (L, M)>>(iter: I) -> Self {
+        iter.into_iter()
+            .fold(Self::new(), |models, (label, model)| {
+                models.with(label, model)
+            })
+    }
+}
+
+/// ```rust
+/// use pharmsol::prelude::*;
+///
+/// let models = OutputModels::from([
+///     ("cp", OutputModel::assay([0.0, 0.1]).additive(0.5)),
+///     ("pd", OutputModel::assay([0.0, 0.2]).into()),
+/// ]);
+/// assert_eq!(models.len(), 2);
+/// ```
+impl<L: ToString, M: Into<OutputModel>, const N: usize> From<[(L, M); N]> for OutputModels {
+    fn from(entries: [(L, M); N]) -> Self {
+        entries.into_iter().collect()
     }
 }
 
@@ -744,7 +841,7 @@ mod tests {
     use crate::Observation;
 
     fn constant(sigma: f64) -> OutputModel {
-        OutputModel::new(ResidualErrorModel::constant(sigma))
+        OutputModel::constant(sigma)
     }
 
     fn density(model: &OutputModel, y: f64, f: f64) -> f64 {
@@ -760,10 +857,7 @@ mod tests {
 
     #[test]
     fn assay_normal_uses_the_observation_for_sigma() {
-        let model = OutputModel::new(AssayErrorModel::additive(
-            ErrorPoly::new(0.0, 0.1, 0.0, 0.0),
-            0.0,
-        ));
+        let model = OutputModel::new(OutputModel::assay([0.0, 0.1]));
         // sigma = 0.1 * 20 = 2
         let expected = distributions::lognormpdf(20.0, 18.0, 2.0);
         assert_eq!(density(&model, 20.0, 18.0), expected);
@@ -782,34 +876,40 @@ mod tests {
     #[test]
     fn student_t_has_heavier_tails() {
         let normal = constant(1.0);
-        let t = constant(1.0).with_family(Family::student_t(3.0).unwrap());
+        let t = constant(1.0).student_t(3.0);
         assert!(density(&t, 0.0, 0.0) < density(&normal, 0.0, 0.0));
         assert!(density(&t, 6.0, 0.0) > density(&normal, 6.0, 0.0));
 
         // Standard t with 1 degree of freedom is the Cauchy distribution.
-        let cauchy = constant(1.0).with_family(Family::student_t(1.0).unwrap());
+        let cauchy = constant(1.0).student_t(1.0);
         let expected = -(std::f64::consts::PI * 2.0).ln();
         assert!((density(&cauchy, 1.0, 0.0) - expected).abs() < 1e-12);
 
         // Large nu approaches the normal.
-        let wide = constant(1.0).with_family(Family::student_t(1.0e7).unwrap());
+        let wide = constant(1.0).student_t(1.0e7);
         assert!((density(&wide, 1.3, 0.0) - density(&normal, 1.3, 0.0)).abs() < 1e-6);
     }
 
     #[test]
-    fn invalid_degrees_of_freedom_are_rejected() {
-        assert!(Family::student_t(0.0).is_err());
-        assert!(Family::student_t(f64::NAN).is_err());
-        assert!(DegreesOfFreedom::new(f64::INFINITY).is_err());
-        // Deserializing goes through the same check.
-        assert!(serde_json::from_str::<Family>(r#"{"StudentT":{"nu":-1.0}}"#).is_err());
+    fn invalid_degrees_of_freedom_are_rejected_at_use() {
+        // Building never fails; scoring and validation do.
+        for nu in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let model = constant(1.0).student_t(nu);
+            assert!(model.log_density(1.0, 0.0, Censor::None, None).is_err());
+            let models = OutputModels::new().with("cp", model);
+            assert!(matches!(
+                models.validate(),
+                Err(PharmsolError::ErrorModelError(ErrorModelError::InvalidFamily(reason)))
+                    if reason.starts_with("output `cp`")
+            ));
+        }
         let family: Family = serde_json::from_str(r#"{"StudentT":{"nu":4.0}}"#).unwrap();
-        assert_eq!(family, Family::student_t(4.0).unwrap());
+        assert_eq!(family, Family::student_t(4.0));
     }
 
     #[test]
     fn censoring_uses_the_family_tails() {
-        for family in [Family::Normal, Family::student_t(4.0).unwrap()] {
+        for family in [Family::Normal, Family::student_t(4.0)] {
             let model = constant(1.0).with_family(family);
             // At the prediction, half the mass is on either side.
             for censoring in [Censor::BLOQ, Censor::ALOQ] {
@@ -862,20 +962,15 @@ mod tests {
             |sigma_log: f64| distributions::lognormpdf(y.ln(), f.ln(), sigma_log) - y.ln();
 
         // Residual: sigma is computed at the prediction, divided by it.
-        let constant_log = constant(2.0).with_transform(Transform::Log);
+        let constant_log = constant(2.0).log();
         assert!((density(&constant_log, y, f) - expected(2.0 / f)).abs() < 1e-12);
-        let combined =
-            OutputModel::new(ResidualErrorModel::combined(3.0, 0.4)).with_transform(Transform::Log);
+        let combined = OutputModel::combined(3.0, 0.4).log();
         let sigma = (9.0 + 0.16 * f * f).sqrt();
         assert!((density(&combined, y, f) - expected(sigma / f)).abs() < 1e-12);
 
         // Assay: sigma is computed at the observation, divided by it, so a
         // purely linear polynomial is a constant coefficient of variation.
-        let assay = OutputModel::new(AssayErrorModel::additive(
-            ErrorPoly::new(0.0, 0.1, 0.0, 0.0),
-            0.0,
-        ))
-        .with_transform(Transform::Log);
+        let assay = OutputModel::new(OutputModel::assay([0.0, 0.1])).log();
         assert!((density(&assay, y, f) - expected(0.1)).abs() < 1e-12);
 
         // `sigma` reports the log-scale sigma too.
@@ -903,18 +998,9 @@ mod tests {
     #[test]
     fn outputs_mix_scales_families_and_transforms() {
         let models = OutputModels::new()
-            .add(
-                "cp",
-                AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0),
-            )
-            .unwrap()
-            .add(
-                "effect",
-                constant(0.5).with_family(Family::student_t(3.0).unwrap()),
-            )
-            .unwrap()
-            .add("metabolite", OutputModel::exponential(0.2))
-            .unwrap();
+            .with("cp", OutputModel::assay([1.0]))
+            .with("effect", constant(0.5).student_t(3.0))
+            .with("metabolite", OutputModel::exponential(0.2));
 
         let cp = OutputLabel::new("cp");
         let effect = OutputLabel::new("effect");
@@ -949,13 +1035,8 @@ mod tests {
     #[test]
     fn sigma_follows_each_scale() {
         let models = OutputModels::new()
-            .add(
-                0,
-                AssayErrorModel::additive(ErrorPoly::new(0.0, 0.1, 0.0, 0.0), 0.0),
-            )
-            .unwrap()
-            .add(1, ResidualErrorModel::proportional(0.2))
-            .unwrap();
+            .with(0, OutputModel::assay([0.0, 0.1]))
+            .with(1, ResidualErrorModel::proportional(0.2));
         let assay =
             Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None).to_prediction(10.0, vec![]);
         let residual =
@@ -971,18 +1052,58 @@ mod tests {
     }
 
     #[test]
+    fn building_reads_like_the_model() {
+        // Polynomials from their leading coefficients.
+        assert_eq!(ErrorPoly::from([0.5]), ErrorPoly::new(0.5, 0.0, 0.0, 0.0));
+        assert_eq!(
+            ErrorPoly::from([1.0, 2.0, 3.0, 4.0]),
+            ErrorPoly::new(1.0, 2.0, 3.0, 4.0)
+        );
+
+        // An unfinished assay model is pure assay error, with lambda estimated.
+        let assay = OutputModel::assay([0.0, 0.1]);
+        assert_eq!(assay.factor_param(), Factor::Variable(0.0));
+        assert!(assay.is_additive());
+        let fixed = OutputModel::assay([0.0, 0.1]).multiplicative(1.5).fixed();
+        assert_eq!(fixed.factor_param(), Factor::Fixed(1.5));
+        assert_eq!(fixed.errorpoly(), ErrorPoly::from([0.0, 0.1]));
+
+        // Shorthands and the general setters agree.
+        assert_eq!(
+            OutputModel::proportional(0.1).log(),
+            OutputModel::new(ResidualErrorModel::proportional(0.1)).with_transform(Transform::Log)
+        );
+        assert_eq!(
+            OutputModel::exponential(0.1),
+            OutputModel::proportional(0.1).log()
+        );
+        assert_eq!(
+            OutputModel::assay([0.0, 0.1]).student_t(4.0),
+            OutputModel::new(OutputModel::assay([0.0, 0.1])).with_family(Family::student_t(4.0))
+        );
+
+        // `with` replaces, `add` refuses, `from` takes the last.
+        let replaced = OutputModels::new()
+            .with("cp", OutputModel::constant(1.0))
+            .with("cp", OutputModel::constant(2.0));
+        assert_eq!(replaced.len(), 1);
+        assert_eq!(replaced.get("cp"), Some(&OutputModel::constant(2.0)));
+        assert!(matches!(
+            replaced.clone().add("cp", OutputModel::constant(3.0)),
+            Err(ErrorModelError::ExistingOutputLabel(label)) if label == "cp"
+        ));
+        let from = OutputModels::from([
+            ("cp", OutputModel::constant(1.0)),
+            ("cp", OutputModel::constant(2.0)),
+        ]);
+        assert_eq!(from, replaced);
+    }
+
+    #[test]
     fn parameters_cover_assay_and_residual_scales() {
         let mut models = OutputModels::new()
-            .add(
-                "cp",
-                AssayErrorModel::multiplicative(
-                    ErrorPoly::new(1.0, 0.0, 0.0, 0.0),
-                    Factor::Fixed(2.0),
-                ),
-            )
-            .unwrap()
-            .add("effect", ResidualErrorModel::combined(0.5, 0.1))
-            .unwrap();
+            .with("cp", OutputModel::assay([1.0]).multiplicative(2.0).fixed())
+            .with("effect", ResidualErrorModel::combined(0.5, 0.1));
 
         assert_eq!(models.parameters("cp").unwrap(), vec![Factor::Fixed(2.0)]);
         assert_eq!(
@@ -995,7 +1116,7 @@ mod tests {
         // Setting keeps a fixed factor fixed.
         assert_eq!(models.parameters("cp").unwrap(), vec![Factor::Fixed(3.0)]);
         assert_eq!(
-            models.get("effect").unwrap().residual(),
+            models.get("effect").unwrap().as_residual(),
             Some(&ResidualErrorModel::combined(0.7, 0.2))
         );
 
@@ -1014,28 +1135,14 @@ mod tests {
 
     #[test]
     fn hash_covers_scale_family_and_transform() {
-        let base = OutputModels::new().add("cp", constant(1.0)).unwrap();
+        let base = OutputModels::new().with("cp", constant(1.0));
         let variants = [
-            OutputModels::new().add("cp", constant(2.0)).unwrap(),
-            OutputModels::new()
-                .add("cp", ResidualErrorModel::proportional(1.0))
-                .unwrap(),
-            OutputModels::new()
-                .add(
-                    "cp",
-                    constant(1.0).with_family(Family::student_t(3.0).unwrap()),
-                )
-                .unwrap(),
-            OutputModels::new()
-                .add(
-                    "cp",
-                    constant(1.0).with_family(Family::student_t(4.0).unwrap()),
-                )
-                .unwrap(),
-            OutputModels::new()
-                .add("cp", constant(1.0).with_transform(Transform::Log))
-                .unwrap(),
-            OutputModels::new().add("effect", constant(1.0)).unwrap(),
+            OutputModels::new().with("cp", constant(2.0)),
+            OutputModels::new().with("cp", ResidualErrorModel::proportional(1.0)),
+            OutputModels::new().with("cp", constant(1.0).student_t(3.0)),
+            OutputModels::new().with("cp", constant(1.0).student_t(4.0)),
+            OutputModels::new().with("cp", constant(1.0).log()),
+            OutputModels::new().with("effect", constant(1.0)),
         ];
         for variant in &variants {
             assert_ne!(base.hash(), variant.hash(), "{variant:?}");
@@ -1046,13 +1153,8 @@ mod tests {
     #[test]
     fn serde_round_trips_and_defaults_family_and_transform() {
         let models = OutputModels::new()
-            .add(
-                "cp",
-                constant(1.0).with_family(Family::student_t(5.0).unwrap()),
-            )
-            .unwrap()
-            .add("pd", OutputModel::exponential(0.1))
-            .unwrap();
+            .with("cp", constant(1.0).student_t(5.0))
+            .with("pd", OutputModel::exponential(0.1));
         let json = serde_json::to_string(&models).unwrap();
         let back: OutputModels = serde_json::from_str(&json).unwrap();
         assert_eq!(back, models);

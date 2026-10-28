@@ -152,7 +152,7 @@ pub fn psi(
 mod tests {
     use super::log_likelihood_matrix;
     use crate::data::builder::SubjectBuilderExt;
-    use crate::data::error_model::{AssayErrorModel, ErrorPoly};
+    use crate::OutputModel;
     use crate::{fa, lag, metadata, Data, ModelKind, OutputModels, ParameterOrder, ODE};
     use ndarray::array;
 
@@ -182,12 +182,7 @@ mod tests {
     }
 
     fn likelihood_error_models() -> OutputModels {
-        OutputModels::new()
-            .add(
-                "cp",
-                AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
-            )
-            .expect("add error model")
+        OutputModels::new().with("cp", OutputModel::assay([0.0, 1.0]))
     }
 
     #[test]

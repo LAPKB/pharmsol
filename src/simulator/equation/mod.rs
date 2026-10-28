@@ -244,6 +244,7 @@ pub trait Equation: Clone + Send + Sync + 'static {
         &self,
         observation_model: &O,
     ) -> Result<(), PharmsolError> {
+        observation_model.validate()?;
         self.validate_output_labels(observation_model.labels())
     }
 }

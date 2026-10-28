@@ -61,18 +61,11 @@ fn named_one_cpt() -> equation::ODE {
 }
 
 fn assay_error_models(label: &str) -> OutputModels {
-    OutputModels::new()
-        .add(
-            label,
-            AssayErrorModel::additive(ErrorPoly::new(0.1, 0.1, 0.0, 0.0), 0.0),
-        )
-        .expect("label-first assay error model")
+    OutputModels::new().with(label, OutputModel::assay([0.1, 0.1]))
 }
 
 fn residual_error_models(label: &str) -> OutputModels {
-    OutputModels::new()
-        .add(label, ResidualErrorModel::combined(0.2, 0.1))
-        .unwrap()
+    OutputModels::new().with(label, ResidualErrorModel::combined(0.2, 0.1))
 }
 
 fn one_cpt_parameters(model: &equation::ODE) -> Parameters {
