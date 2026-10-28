@@ -13,36 +13,27 @@ use crate::name_match::{
 use crate::syntax;
 use crate::{ModelKind, RouteKind, MAX_CONST_USIZE, RATE_FUNCTION_NAME};
 
+/// Identifiers that cannot name a symbol, besides the built-in function names,
+/// which `is_reserved_name` derives from `MathFunction` and
+/// `UtilityFunctions` so new functions are reserved automatically.
 const RESERVED_NAMES: &[&str] = &[
-    "abs",
     "bioavailability",
     "carry_forward",
-    "ceil",
     "ddt",
-    "exp",
-    "floor",
-    "estimate_effect_2",
-    "estimate_effect_3",
     "lag",
     "linear",
-    "ln",
     "locf",
-    "log",
-    "log10",
-    "log2",
-    "max",
-    "min",
     "noise",
-    "pow",
     RATE_FUNCTION_NAME,
-    "round",
-    "sin",
-    "cos",
-    "tan",
-    "sqrt",
     "t",
     "time",
 ];
+
+fn is_reserved_name(name: &str) -> bool {
+    RESERVED_NAMES.contains(&name)
+        || MathFunction::from_name(name).is_some()
+        || UtilityFunctions::from_name(name).is_some()
+}
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct RoutePropertyDependencies {
@@ -2016,7 +2007,7 @@ impl<'a> Analyzer<'a> {
         ty: PendingSymbolType,
         span: Span,
     ) -> Result<SymbolId, AnalysisError> {
-        if RESERVED_NAMES.contains(&name) {
+        if is_reserved_name(name) {
             return Err(AnalysisAssist::default()
                 .help(format!(
                     "rename `{name}` to a non-reserved identifier such as `{}_value`",
@@ -3062,7 +3053,8 @@ fn call_result_type(intrinsic: MathFunction, args: &[AnalyzedExpr]) -> ValueType
         | MathFunction::Sin
         | MathFunction::Cos
         | MathFunction::Tan
-        | MathFunction::Sqrt => ValueType::Real,
+        | MathFunction::Sqrt
+        | MathFunction::Effect50 => ValueType::Real,
     }
 }
 
@@ -3167,6 +3159,13 @@ fn fold_call(intrinsic: MathFunction, values: &[ConstValue]) -> Option<ConstValu
         MathFunction::Cos => Some(ConstValue::Real(values.first()?.as_f64()?.cos())),
         MathFunction::Tan => Some(ConstValue::Real(values.first()?.as_f64()?.tan())),
         MathFunction::Sqrt => Some(ConstValue::Real(values.first()?.as_f64()?.sqrt())),
+        MathFunction::Effect50 => Some(ConstValue::Real(effect50(
+            values.first()?.as_f64()?,
+            values.get(1)?.as_f64()?,
+            values.get(2)?.as_f64()?,
+            values.get(3)?.as_f64()?,
+            values.get(4)?.as_f64()?,
+        ))),
     }
 }
 
@@ -4706,5 +4705,82 @@ model constant_estimate_effect_3 {
         assert!(error
             .render(&case_source)
             .contains("unknown function `ESTIMATE_EFFECT_3`"));
+    }
+
+    #[test]
+    fn effect50_folds_constants_with_the_documented_defaults() {
+        let source = r#"
+model effect50_defaults {
+    kind ode
+    constants {
+        half = effect50(0, 1, 0.5, 1, 0.5)
+    }
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = effect50(0, 1, 0.5, 1, 0.5)
+    }
+}
+"#;
+        let model = crate::parse_model(source).expect("model parses");
+        let analyzed = analyze_model(&model).expect("effect50 model analyzes");
+        let AnalyzedStmtKind::Assign(output) = &analyzed.outputs_block.statements[0].kind else {
+            panic!("expected output assignment");
+        };
+        let AnalyzedExprKind::Call { callee, args } = &output.value.kind else {
+            panic!("expected effect50 call");
+        };
+        assert_eq!(callee, &AnalyzedCall::Math(MathFunction::Effect50));
+        assert_eq!(args.len(), 5);
+        assert_eq!(output.value.ty, ValueType::Real);
+        assert_eq!(output.value.constant, Some(ConstValue::Real(0.5)));
+    }
+
+    #[test]
+    fn effect50_requires_five_numeric_arguments_and_reserves_its_name() {
+        let source = r#"
+model broken_effect50 {
+    kind ode
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = effect50(0, 1, 0.5, central)
+    }
+}
+"#;
+        let model = crate::parse_model(source).expect("model parses");
+        let error = analyze_model(&model).expect_err("wrong effect50 arity must fail");
+        assert!(error
+            .render(source)
+            .contains("function `effect50` expects 5 argument(s), got 4"));
+
+        let source = source.replace("0.5, central)", "0.5, 1, true)");
+        let model = crate::parse_model(&source).expect("model parses");
+        let error = analyze_model(&model).expect_err("boolean effect50 argument must fail");
+        assert!(error
+            .render(&source)
+            .contains("`effect50` argument must be numeric"));
+
+        let source = "name = reserved_effect50\nkind = ode\nparams = effect50\nstates = central\ndx(central) = 0\nout(cp) = central\n";
+        let model = crate::parse_model(source).expect("model syntax is valid");
+        let error = analyze_model(&model).expect_err("`effect50` is a reserved name");
+        assert!(error
+            .render(source)
+            .contains("`effect50` is reserved by the DSL and cannot be used as a symbol name"));
+    }
+
+    #[test]
+    fn every_builtin_function_name_is_reserved() {
+        for name in MathFunction::ALL
+            .iter()
+            .map(|function| function.name())
+            .chain(UtilityFunctions::ALL.iter().map(|function| function.name()))
+        {
+            assert!(is_reserved_name(name), "`{name}` must be reserved");
+        }
     }
 }

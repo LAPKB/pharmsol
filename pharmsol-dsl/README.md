@@ -100,6 +100,23 @@ starts on; otherwise it starts a new statement. That way, a dangling operator
 or an unclosed `(` is reported on its own line instead of absorbing the next
 statement. The same rules apply inside `if` bodies.
 
+## Built-in functions
+
+Mathematical functions take numeric arguments, return real values (`abs`,
+`min`, and `max` keep integer arguments integer), and fold to constants when
+every argument is constant:
+
+- `abs`, `ceil`, `floor`, `round`, `exp`, `ln` (alias `log`), `log10`,
+  `log2`, `sqrt`, `sin`, `cos`, `tan` take one argument.
+- `min`, `max`, and `pow` take two arguments.
+- `effect50(min, max, e50, h, x)` is the sigmoid Emax (Hill) model
+  `min + (max - min) * x^h / (e50^h + x^h)`. It returns `min` at `x = 0` and
+  the midpoint of `min` and `max` at `x = e50`; for example,
+  `effect50(0, 1, 0.5, 1, 0.5)` is `0.5`.
+
+Function names are reserved and cannot name parameters, states, or other
+symbols.
+
 ## Runtime-only utility functions
 
 The DSL supports the same effect functions as the Rust API:

@@ -713,10 +713,11 @@ pub enum MathFunction {
     Cos,
     Tan,
     Sqrt,
+    Effect50,
 }
 
 impl MathFunction {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::Abs,
         Self::Ceil,
         Self::Exp,
@@ -733,6 +734,7 @@ impl MathFunction {
         Self::Cos,
         Self::Tan,
         Self::Sqrt,
+        Self::Effect50,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -753,6 +755,7 @@ impl MathFunction {
             Self::Cos => "cos",
             Self::Tan => "tan",
             Self::Sqrt => "sqrt",
+            Self::Effect50 => "effect50",
         }
     }
 
@@ -774,6 +777,7 @@ impl MathFunction {
             "cos" => Some(Self::Cos),
             "tan" => Some(Self::Tan),
             "sqrt" => Some(Self::Sqrt),
+            "effect50" => Some(Self::Effect50),
             _ => None,
         }
     }
@@ -781,9 +785,28 @@ impl MathFunction {
     pub fn argument_count(self) -> ArgumentCount {
         match self {
             Self::Max | Self::Min | Self::Pow => ArgumentCount::Exact(2),
+            Self::Effect50 => ArgumentCount::Exact(5),
             _ => ArgumentCount::Exact(1),
         }
     }
+}
+
+/// Sigmoid Emax (Hill) effect, exposed in the DSL as
+/// `effect50(min, max, e50, h, x)`.
+///
+/// Returns `min + (max - min) * x^h / (e50^h + x^h)`: `min` at `x = 0`,
+/// halfway between `min` and `max` at `x = e50`, and approaching `max` as `x`
+/// grows. It is evaluated as `1 / (1 + (e50 / x)^h)` so that large `x` or `h`
+/// saturate to `max` instead of overflowing to `inf / inf`.
+///
+/// ```
+/// use pharmsol_dsl::effect50;
+///
+/// assert_eq!(effect50(0.0, 1.0, 0.5, 1.0, 0.5), 0.5);
+/// assert_eq!(effect50(0.0, 1.0, 0.5, 1.0, 0.0), 0.0);
+/// ```
+pub fn effect50(min: f64, max: f64, e50: f64, h: f64, x: f64) -> f64 {
+    min + (max - min) / (1.0 + (e50 / x).powf(h))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1030,5 +1053,23 @@ mod tests {
             error.to_string(),
             "analytical structure `one_compartment_with_absorption` requires `ka`; declare it in `params` or `derived`"
         );
+    }
+
+    #[test]
+    fn effect50_matches_the_sigmoid_emax_model() {
+        use super::effect50;
+
+        // Documented defaults: min 0, max 1, e50 0.5, h 1, x 0.5.
+        assert_eq!(effect50(0.0, 1.0, 0.5, 1.0, 0.5), 0.5);
+        assert_eq!(effect50(2.0, 10.0, 3.0, 2.5, 3.0), 6.0);
+        assert_eq!(effect50(1.0, 0.0, 0.5, 1.0, 0.0), 1.0);
+
+        let (min, max, e50, h, x): (f64, f64, f64, f64, f64) = (0.2, 3.0, 1.7, 2.3, 0.9);
+        let expected = min + (max - min) * x.powf(h) / (e50.powf(h) + x.powf(h));
+        assert!((effect50(min, max, e50, h, x) - expected).abs() < 1e-14);
+
+        // Saturates instead of overflowing to inf / inf.
+        assert_eq!(effect50(0.0, 1.0, 1.0, 400.0, 10.0), 1.0);
+        assert_eq!(effect50(0.0, 1.0, 0.0, 1.0, 2.0), 1.0);
     }
 }

@@ -75,6 +75,10 @@ mod externs {
         x.tan()
     }
 
+    pub extern "C" fn effect50_(min: f64, max: f64, e50: f64, h: f64, x: f64) -> f64 {
+        pharmsol_dsl::effect50(min, max, e50, h, x)
+    }
+
     pub extern "C" fn pow_(a: f64, b: f64) -> f64 {
         a.powf(b)
     }
@@ -167,6 +171,7 @@ struct ExternIds {
     cos: cranelift_module::FuncId,
     tan: cranelift_module::FuncId,
     pow: cranelift_module::FuncId,
+    effect50: cranelift_module::FuncId,
 }
 
 #[derive(Clone, Copy)]
@@ -184,6 +189,7 @@ struct ExternRefs {
     cos: codegen::ir::FuncRef,
     tan: codegen::ir::FuncRef,
     pow: codegen::ir::FuncRef,
+    effect50: codegen::ir::FuncRef,
 }
 
 #[derive(Clone, Copy)]
@@ -255,6 +261,7 @@ pub fn compile_execution_artifact(
     builder.symbol("pm_cos", externs::cos_ as *const u8);
     builder.symbol("pm_tan", externs::tan_ as *const u8);
     builder.symbol("pm_pow", externs::pow_ as *const u8);
+    builder.symbol("pm_effect50", externs::effect50_ as *const u8);
 
     let mut module = JITModule::new(builder);
     let ptr_ty = module.target_config().pointer_type();
@@ -355,38 +362,33 @@ pub fn compile_execution_artifact(
 }
 
 fn declare_externs(module: &mut JITModule, span: Span) -> Result<ExternIds, JitCompileError> {
-    let declare_unary = |module: &mut JITModule, symbol: &str| -> Result<_, JitCompileError> {
-        let mut signature = module.make_signature();
-        signature.params.push(AbiParam::new(types::F64));
-        signature.returns.push(AbiParam::new(types::F64));
-        module
-            .declare_function(symbol, Linkage::Import, &signature)
-            .map_err(|error| JitCompileError::new(error.to_string(), Some(span)))
-    };
-    let declare_binary = |module: &mut JITModule, symbol: &str| -> Result<_, JitCompileError> {
-        let mut signature = module.make_signature();
-        signature.params.push(AbiParam::new(types::F64));
-        signature.params.push(AbiParam::new(types::F64));
-        signature.returns.push(AbiParam::new(types::F64));
-        module
-            .declare_function(symbol, Linkage::Import, &signature)
-            .map_err(|error| JitCompileError::new(error.to_string(), Some(span)))
-    };
+    let declare =
+        |module: &mut JITModule, symbol: &str, arity: usize| -> Result<_, JitCompileError> {
+            let mut signature = module.make_signature();
+            for _ in 0..arity {
+                signature.params.push(AbiParam::new(types::F64));
+            }
+            signature.returns.push(AbiParam::new(types::F64));
+            module
+                .declare_function(symbol, Linkage::Import, &signature)
+                .map_err(|error| JitCompileError::new(error.to_string(), Some(span)))
+        };
 
     Ok(ExternIds {
-        exp: declare_unary(module, "pm_exp")?,
-        ln: declare_unary(module, "pm_ln")?,
-        log10: declare_unary(module, "pm_log10")?,
-        log2: declare_unary(module, "pm_log2")?,
-        sqrt: declare_unary(module, "pm_sqrt")?,
-        abs: declare_unary(module, "pm_abs")?,
-        ceil: declare_unary(module, "pm_ceil")?,
-        floor: declare_unary(module, "pm_floor")?,
-        round: declare_unary(module, "pm_round")?,
-        sin: declare_unary(module, "pm_sin")?,
-        cos: declare_unary(module, "pm_cos")?,
-        tan: declare_unary(module, "pm_tan")?,
-        pow: declare_binary(module, "pm_pow")?,
+        exp: declare(module, "pm_exp", 1)?,
+        ln: declare(module, "pm_ln", 1)?,
+        log10: declare(module, "pm_log10", 1)?,
+        log2: declare(module, "pm_log2", 1)?,
+        sqrt: declare(module, "pm_sqrt", 1)?,
+        abs: declare(module, "pm_abs", 1)?,
+        ceil: declare(module, "pm_ceil", 1)?,
+        floor: declare(module, "pm_floor", 1)?,
+        round: declare(module, "pm_round", 1)?,
+        sin: declare(module, "pm_sin", 1)?,
+        cos: declare(module, "pm_cos", 1)?,
+        tan: declare(module, "pm_tan", 1)?,
+        pow: declare(module, "pm_pow", 2)?,
+        effect50: declare(module, "pm_effect50", 5)?,
     })
 }
 
@@ -487,6 +489,7 @@ fn emit_statement_function(
         cos: module.declare_func_in_func(externs.cos, builder.func),
         tan: module.declare_func_in_func(externs.tan, builder.func),
         pow: module.declare_func_in_func(externs.pow, builder.func),
+        effect50: module.declare_func_in_func(externs.effect50, builder.func),
     };
 
     let mut locals = BTreeMap::new();
@@ -1060,6 +1063,7 @@ fn lower_math_call(
                 MathFunction::Cos => env.externs.cos,
                 MathFunction::Tan => env.externs.tan,
                 MathFunction::Sqrt => env.externs.sqrt,
+                MathFunction::Effect50 => env.externs.effect50,
                 MathFunction::Max | MathFunction::Min => unreachable!(),
             };
 
