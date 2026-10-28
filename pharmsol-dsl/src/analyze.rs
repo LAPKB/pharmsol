@@ -1677,15 +1677,23 @@ impl<'a> Analyzer<'a> {
         })?;
         let signature = function.signature();
         let mut typed_args = Vec::with_capacity(signature.params.len());
-        for arg in bind_call_args(signature, callee, args)? {
+        let bound = bind_call_args(signature, callee, args)?;
+        for (arg, param) in bound.into_iter().zip(signature.params) {
             typed_args.push(match arg {
                 BoundArg::Given(expr) => {
                     let analyzed = self.analyze_expr(expr, env)?;
-                    self.expect_numeric(
-                        &analyzed,
-                        &format!("`{}` argument", callee.text),
-                        expr.span,
-                    )?;
+                    match param.kind {
+                        ParamKind::Numeric => self.expect_numeric(
+                            &analyzed,
+                            &format!("`{}` argument", callee.text),
+                            expr.span,
+                        )?,
+                        ParamKind::Bool => self.expect_bool(
+                            &analyzed,
+                            &format!("`{}` argument `{}`", callee.text, param.name),
+                            expr.span,
+                        )?,
+                    }
                     analyzed
                 }
                 BoundArg::Default(value) => {
@@ -1699,7 +1707,7 @@ impl<'a> Analyzer<'a> {
                 }
             });
         }
-        let ty = call_result_type(signature.returns, &typed_args);
+        let ty = call_result_type(signature, &typed_args);
         let (callee, constant) = match function {
             // Pharmacometric calls are deliberately runtime-only, even when
             // every argument happens to be a literal.
@@ -2985,12 +2993,14 @@ fn map_binary_op(op: syntax::BinaryOp) -> AnalyzedBinaryOp {
     }
 }
 
-fn call_result_type(returns: ReturnType, args: &[AnalyzedExpr]) -> ValueType {
-    match returns {
+fn call_result_type(signature: &FunctionSignature, args: &[AnalyzedExpr]) -> ValueType {
+    match signature.returns {
         ReturnType::Real => ValueType::Real,
         ReturnType::PromotedArgs => args
             .iter()
-            .map(|arg| arg.ty)
+            .zip(signature.params)
+            .filter(|(_, param)| param.kind == ParamKind::Numeric)
+            .map(|(arg, _)| arg.ty)
             .reduce(promote_numeric)
             .unwrap_or(ValueType::Real),
     }
@@ -3069,11 +3079,24 @@ fn fold_numeric(
 }
 
 fn fold_call(intrinsic: MathFunction, values: &[ConstValue]) -> Option<ConstValue> {
-    if let (MathFunction::Abs, [ConstValue::Int(value)]) = (intrinsic, values) {
-        return Some(match value.checked_abs() {
-            Some(value) => ConstValue::Int(value),
-            None => ConstValue::Real((*value as f64).abs()),
-        });
+    match (intrinsic, values) {
+        (MathFunction::Abs, [ConstValue::Int(value)]) => {
+            return Some(match value.checked_abs() {
+                Some(value) => ConstValue::Int(value),
+                None => ConstValue::Real((*value as f64).abs()),
+            });
+        }
+        // Keep the chosen branch's type, so `ifelse` of two ints stays `int`.
+        (MathFunction::IfElse, [ConstValue::Bool(test), yes, no]) => {
+            let chosen = if *test { yes } else { no };
+            return if yes.value_type() == no.value_type() {
+                Some(chosen.clone())
+            } else {
+                chosen.as_f64().map(ConstValue::Real)
+            };
+        }
+        (MathFunction::IfElse, _) => return None,
+        _ => {}
     }
     let values = values
         .iter()
@@ -4910,6 +4933,66 @@ model named_constants {
         assert!(output_error("effect50(hil = 2)").contains("did you mean `h`?"));
         assert!(output_error("effect50(maximum = 2)").contains("did you mean `max`?"));
         assert!(!output_error("effect50(m = 2)").contains("did you mean"));
+    }
+
+    #[test]
+    fn ifelse_checks_its_condition_and_keeps_branch_types() {
+        let analyzed = analyze_output("ifelse(central > 1, 2, 3)").expect("analyzes");
+        assert_eq!(analyzed.ty, ValueType::Int);
+        assert!(analyzed.constant.is_none());
+
+        assert_eq!(
+            analyze_output("ifelse(central > 1, central, 0)")
+                .expect("analyzes")
+                .ty,
+            ValueType::Real
+        );
+        assert_eq!(
+            analyze_output("ifelse(false, 2, 3)")
+                .expect("analyzes")
+                .constant,
+            Some(ConstValue::Int(3))
+        );
+        assert_eq!(
+            analyze_output("ifelse(test = 2 > 1, no = 3.5, yes = 2)")
+                .expect("analyzes")
+                .constant,
+            Some(ConstValue::Real(2.0))
+        );
+
+        assert!(
+            output_error("ifelse(1, 2, 3)").contains("`ifelse` argument `test` must be boolean")
+        );
+        assert!(
+            output_error("ifelse(true, false, 3)").contains("`ifelse` argument must be numeric")
+        );
+        assert!(output_error("ifelse(true, 2)")
+            .contains("function `ifelse` expects 3 argument(s), got 2"));
+    }
+
+    #[test]
+    fn sigmoid_logit_and_tanh_fold_constants() {
+        for (expr, expected) in [
+            ("sigmoid(0)", 0.5),
+            ("sigmoid(x = 2, k = 0)", 0.5),
+            ("logit(0.5)", 0.0),
+            ("tanh(0)", 0.0),
+            ("sigmoid(1e6)", 1.0),
+            ("sigmoid(-1e6)", 0.0),
+        ] {
+            assert_eq!(
+                analyze_output(expr).expect("analyzes").constant,
+                Some(ConstValue::Real(expected)),
+                "{expr}"
+            );
+        }
+        let Some(ConstValue::Real(round_trip)) = analyze_output("logit(sigmoid(1.3))")
+            .expect("analyzes")
+            .constant
+        else {
+            panic!("expected a real constant");
+        };
+        assert!((round_trip - 1.3).abs() < 1e-12);
     }
 
     #[test]

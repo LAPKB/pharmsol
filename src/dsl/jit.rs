@@ -75,6 +75,18 @@ mod externs {
         x.tan()
     }
 
+    pub extern "C" fn tanh_(x: f64) -> f64 {
+        x.tanh()
+    }
+
+    pub extern "C" fn sigmoid_(x: f64, k: f64) -> f64 {
+        pharmsol_dsl::sigmoid(x, k)
+    }
+
+    pub extern "C" fn logit_(p: f64) -> f64 {
+        pharmsol_dsl::logit(p)
+    }
+
     pub extern "C" fn effect50_(min: f64, max: f64, e50: f64, h: f64, x: f64) -> f64 {
         pharmsol_dsl::effect50(min, max, e50, h, x)
     }
@@ -101,8 +113,11 @@ fn math_extern(function: MathFunction) -> Option<*const u8> {
         MathFunction::Cos => externs::cos_ as *const u8,
         MathFunction::Tan => externs::tan_ as *const u8,
         MathFunction::Sqrt => externs::sqrt_ as *const u8,
+        MathFunction::Tanh => externs::tanh_ as *const u8,
+        MathFunction::Sigmoid => externs::sigmoid_ as *const u8,
+        MathFunction::Logit => externs::logit_ as *const u8,
         MathFunction::Effect50 => externs::effect50_ as *const u8,
-        MathFunction::Max | MathFunction::Min => return None,
+        MathFunction::Max | MathFunction::Min | MathFunction::IfElse => return None,
     })
 }
 
@@ -1019,6 +1034,21 @@ fn lower_math_call(
             };
             Ok(LoweredValue {
                 value,
+                ty: target_ty,
+            })
+        }
+        MathFunction::IfElse => {
+            let [test, yes, no] = args else {
+                return Err(JitCompileError::new(
+                    "ifelse expects 3 arguments",
+                    Some(span),
+                ));
+            };
+            let test = cast_value(builder, *test, ValueType::Bool, span)?;
+            let yes = cast_value(builder, *yes, target_ty, span)?;
+            let no = cast_value(builder, *no, target_ty, span)?;
+            Ok(LoweredValue {
+                value: builder.ins().select(test.value, yes.value, no.value),
                 ty: target_ty,
             })
         }

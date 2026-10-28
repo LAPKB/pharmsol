@@ -107,8 +107,15 @@ Mathematical functions take numeric arguments, return real values (`abs`,
 every argument is constant:
 
 - `abs`, `ceil`, `floor`, `round`, `exp`, `ln` (alias `log`), `log10`,
-  `log2`, `sqrt`, `sin`, `cos`, `tan` take one argument, `x`.
+  `log2`, `sqrt`, `sin`, `cos`, `tan`, `tanh` take one argument, `x`.
 - `min(a, b)`, `max(a, b)`, and `pow(base, exponent)` take two.
+- `logit(p)` is `ln(p / (1 - p))`, and `sigmoid(x, k = 1)` is
+  `1 / (1 + exp(-k * x))`, its inverse when `k = 1`. `sigmoid(t - t0, k)` is a
+  smooth switch at `t0` that avoids the discontinuity of an `if`, which the ODE
+  solvers handle poorly.
+- `ifelse(test, yes, no)` returns `yes` when the boolean `test` is true and
+  `no` otherwise, so a value can be chosen inside an expression. Both branches
+  are evaluated.
 - `effect50(min, max, e50, h, x)` is the sigmoid Emax (Hill) model
   `min + (max - min) * x^h / (e50^h + x^h)`. It returns `min` at `x = 0` and
   the midpoint of `min` and `max` at `x = e50`. Every argument is optional,
@@ -132,7 +139,8 @@ symbols.
 Each function is described once by its `FunctionSignature` (name, parameters
 with optional defaults, and result type), which drives name lookup, reserved
 names, argument binding, and error messages. To add a math function, add a
-`MathFunction` variant, its signature, and its `MathFunction::evaluate` arm;
+`MathFunction` variant, its signature (marking any boolean parameter with
+`FunctionParam::condition`), and its `MathFunction::evaluate` arm;
 the main `pharmsol` crate then needs only the host function for its JIT, and a
 test checks the JIT against `evaluate` for every function.
 

@@ -3,7 +3,7 @@
 use approx::assert_relative_eq;
 use pharmsol::dsl::{compile_module_source_to_runtime, CompiledRuntimeModel};
 use pharmsol::{effect50, Parameters, Subject, SubjectBuilderExt};
-use pharmsol_dsl::MathFunction;
+use pharmsol_dsl::{MathFunction, ParamKind};
 
 const PARAMS: [(&str, f64); 5] = [
     ("p1", 0.7),
@@ -37,20 +37,42 @@ fn predict(model: &CompiledRuntimeModel) -> f64 {
 
 #[test]
 fn jit_matches_the_reference_evaluator_for_every_math_function() {
-    let values = PARAMS.map(|(_, value)| value);
     for function in MathFunction::ALL {
-        let arity = function.signature().params.len();
-        let args = PARAMS[..arity]
-            .iter()
-            .map(|(name, _)| *name)
-            .collect::<Vec<_>>()
-            .join(", ");
-        let expected = function
-            .evaluate(&values[..arity])
-            .expect("one value per parameter");
-        let actual = predict(&compile(&format!("{}({args})", function.name())));
-        assert_relative_eq!(actual, expected, max_relative = 1e-12);
+        for condition in [true, false] {
+            // Numeric parameters take p1, p2, ... in turn; a boolean one takes
+            // a comparison so both branches of `ifelse` are exercised.
+            let mut numeric = PARAMS.iter();
+            let (args, values): (Vec<_>, Vec<_>) = function
+                .signature()
+                .params
+                .iter()
+                .map(|param| match param.kind {
+                    ParamKind::Numeric => {
+                        let (name, value) = numeric.next().expect("enough parameters");
+                        (name.to_string(), *value)
+                    }
+                    ParamKind::Bool if condition => ("p2 > p1".to_string(), 1.0),
+                    ParamKind::Bool => ("p1 > p2".to_string(), 0.0),
+                })
+                .unzip();
+            let expected = function.evaluate(&values).expect("one value per parameter");
+            let call = format!("{}({})", function.name(), args.join(", "));
+            assert_relative_eq!(predict(&compile(&call)), expected, max_relative = 1e-12);
+        }
     }
+}
+
+#[test]
+fn jit_ifelse_selects_a_branch_from_runtime_conditions() {
+    assert_relative_eq!(predict(&compile("ifelse(central >= 0, 2, 3)")), 2.0);
+    assert_relative_eq!(predict(&compile("ifelse(t > 1, 2, p1)")), 0.7);
+    assert_relative_eq!(
+        predict(&compile(
+            "ifelse(no = 0, yes = sigmoid(p1, k = p4), test = p5 < 1)"
+        )),
+        pharmsol_dsl::sigmoid(0.7, 2.2),
+        max_relative = 1e-12
+    );
 }
 
 #[test]

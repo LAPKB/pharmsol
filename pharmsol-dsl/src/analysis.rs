@@ -667,14 +667,25 @@ pub enum AnalyzedCall {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FunctionParam {
     pub name: &'static str,
+    pub kind: ParamKind,
     /// Value used when a call omits this argument; `None` makes it required.
     pub default: Option<f64>,
+}
+
+/// The type of value a parameter accepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamKind {
+    /// `int` or `real`.
+    Numeric,
+    /// `bool`, such as a comparison.
+    Bool,
 }
 
 impl FunctionParam {
     pub const fn required(name: &'static str) -> Self {
         Self {
             name,
+            kind: ParamKind::Numeric,
             default: None,
         }
     }
@@ -682,7 +693,16 @@ impl FunctionParam {
     pub const fn optional(name: &'static str, default: f64) -> Self {
         Self {
             name,
+            kind: ParamKind::Numeric,
             default: Some(default),
+        }
+    }
+
+    pub const fn condition(name: &'static str) -> Self {
+        Self {
+            name,
+            kind: ParamKind::Bool,
+            default: None,
         }
     }
 }
@@ -692,7 +712,8 @@ impl FunctionParam {
 pub enum ReturnType {
     /// Always `real`.
     Real,
-    /// The promoted type of the arguments: `int` when every argument is `int`.
+    /// The promoted type of the numeric arguments: `int` when every one is
+    /// `int`.
     PromotedArgs,
 }
 
@@ -767,6 +788,16 @@ const POW_PARAMS: &[FunctionParam] = &[
     FunctionParam::required("base"),
     FunctionParam::required("exponent"),
 ];
+const SIGMOID_PARAMS: &[FunctionParam] = &[
+    FunctionParam::required("x"),
+    FunctionParam::optional("k", 1.0),
+];
+const LOGIT_PARAMS: &[FunctionParam] = &[FunctionParam::required("p")];
+const IFELSE_PARAMS: &[FunctionParam] = &[
+    FunctionParam::condition("test"),
+    FunctionParam::required("yes"),
+    FunctionParam::required("no"),
+];
 const EFFECT50_PARAMS: &[FunctionParam] = &[
     FunctionParam::optional("min", 0.0),
     FunctionParam::optional("max", 1.0),
@@ -835,11 +866,15 @@ pub enum MathFunction {
     Cos,
     Tan,
     Sqrt,
+    Tanh,
+    Sigmoid,
+    Logit,
+    IfElse,
     Effect50,
 }
 
 impl MathFunction {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 21] = [
         Self::Abs,
         Self::Ceil,
         Self::Exp,
@@ -856,6 +891,10 @@ impl MathFunction {
         Self::Cos,
         Self::Tan,
         Self::Sqrt,
+        Self::Tanh,
+        Self::Sigmoid,
+        Self::Logit,
+        Self::IfElse,
         Self::Effect50,
     ];
 
@@ -944,6 +983,26 @@ impl MathFunction {
                 params: X,
                 returns: Real,
             },
+            Self::Tanh => &FunctionSignature {
+                name: "tanh",
+                params: X,
+                returns: Real,
+            },
+            Self::Sigmoid => &FunctionSignature {
+                name: "sigmoid",
+                params: SIGMOID_PARAMS,
+                returns: Real,
+            },
+            Self::Logit => &FunctionSignature {
+                name: "logit",
+                params: LOGIT_PARAMS,
+                returns: Real,
+            },
+            Self::IfElse => &FunctionSignature {
+                name: "ifelse",
+                params: IFELSE_PARAMS,
+                returns: PromotedArgs,
+            },
             Self::Effect50 => &FunctionSignature {
                 name: "effect50",
                 params: EFFECT50_PARAMS,
@@ -969,6 +1028,7 @@ impl MathFunction {
     /// Evaluates the function on real arguments given in signature order.
     ///
     /// Returns `None` unless `args` holds exactly one value per parameter.
+    /// A `bool` parameter is passed as `1.0` (true) or `0.0` (false).
     /// Analysis uses this to fold constant calls; backends must match it.
     pub fn evaluate(self, args: &[f64]) -> Option<f64> {
         if args.len() != self.signature().params.len() {
@@ -990,6 +1050,16 @@ impl MathFunction {
             Self::Cos => args[0].cos(),
             Self::Tan => args[0].tan(),
             Self::Sqrt => args[0].sqrt(),
+            Self::Tanh => args[0].tanh(),
+            Self::Sigmoid => sigmoid(args[0], args[1]),
+            Self::Logit => logit(args[0]),
+            Self::IfElse => {
+                if args[0] != 0.0 {
+                    args[1]
+                } else {
+                    args[2]
+                }
+            }
             Self::Effect50 => effect50(args[0], args[1], args[2], args[3], args[4]),
         })
     }
@@ -1024,6 +1094,22 @@ impl BuiltinFunction {
     pub const fn name(self) -> &'static str {
         self.signature().name
     }
+}
+
+/// Logistic function `1 / (1 + exp(-k * x))`, exposed in the DSL as
+/// `sigmoid(x, k = 1)`.
+///
+/// It rises smoothly from 0 to 1, passing 0.5 at `x = 0`; a larger `k` makes
+/// the step steeper. `sigmoid(x)` is the inverse of [`logit`], and
+/// `sigmoid(t - t0, k)` is a smooth switch that turns on at `t0`.
+pub fn sigmoid(x: f64, k: f64) -> f64 {
+    1.0 / (1.0 + (-k * x).exp())
+}
+
+/// Log-odds `ln(p / (1 - p))`, exposed in the DSL as `logit(p)`; the inverse
+/// of [`sigmoid`] with `k = 1`.
+pub fn logit(p: f64) -> f64 {
+    (p / (1.0 - p)).ln()
 }
 
 /// Sigmoid Emax (Hill) effect, exposed in the DSL as
