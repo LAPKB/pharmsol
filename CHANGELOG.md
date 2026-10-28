@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.29.4...pharmsol-v0.30.0) - 2026-10-28
+
+### Added
+
+- *(dsl)* [**breaking**] tighten the authoring DSL ([#394](https://github.com/LAPKB/pharmsol/pull/394))
+- [**breaking**] key error models by output label ([#392](https://github.com/LAPKB/pharmsol/pull/392))
+- Remove label prefixes ([#383](https://github.com/LAPKB/pharmsol/pull/383))
+
+### Fixed
+
+- *(analytical)* route dense predictions through the prediction cache ([#396](https://github.com/LAPKB/pharmsol/pull/396))
+- [**breaking**] select NCA observations by output label ([#393](https://github.com/LAPKB/pharmsol/pull/393))
+
+### Other
+
+- Update diffsol to =0.18.0 and diffsol-la to 0.3.0 ([#400](https://github.com/LAPKB/pharmsol/pull/400))
+- Add dependency group for cranelift in dependabot ([#403](https://github.com/LAPKB/pharmsol/pull/403))
+- [**breaking**] one driver per equation family for native and DSL models ([#397](https://github.com/LAPKB/pharmsol/pull/397))
+- *(bench)* measure solver work instead of cache hits ([#395](https://github.com/LAPKB/pharmsol/pull/395))
+- Bump cranelift family to 0.136.3 ([#385](https://github.com/LAPKB/pharmsol/pull/385))
+
 ## [0.29.4](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.29.3...pharmsol-v0.29.4) - 2026-10-19
 
 ### Fixed

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-macros-v0.29.4...pharmsol-macros-v0.30.0) - 2026-10-28
+
+### Added
+
+- Remove label prefixes ([#383](https://github.com/LAPKB/pharmsol/pull/383))
+
 ## [0.29.1](https://github.com/LAPKB/pharmsol/compare/pharmsol-macros-v0.29.0...pharmsol-macros-v0.29.1) - 2026-09-11
 
 ### Fixed
