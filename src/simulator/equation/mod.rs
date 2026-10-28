@@ -71,22 +71,36 @@ pub use ode::*;
 pub use pharmsol_dsl::{AnalyticalKernel, ModelKind};
 pub use sde::*;
 
-use crate::{
-    error_model::{AssayErrorModels, ErrorModelError},
-    OutputLabel, PharmsolError, Subject,
-};
+use std::borrow::Cow;
 
-use super::likelihood::Prediction;
+use crate::{error_model::ErrorModelError, OutputLabel, PharmsolError, Subject};
 
-/// Prediction container returned by an [`Equation`].
-pub trait Predictions {
-    /// Get all predictions as a vector.
-    ///
-    /// Particle containers return the mean prediction across particles.
-    fn get_predictions(&self) -> Vec<Prediction>;
+use super::likelihood::{ObservationModel, Prediction, SubjectPredictions};
 
-    /// Calculate the log-likelihood of the predictions given an error model.
-    fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError>;
+/// Prediction container returned by an [`Equation`], reduced to one
+/// prediction per observation.
+///
+/// Deterministic equations return
+/// [`SubjectPredictions`],
+/// which already are one prediction per observation and are borrowed.
+/// [`SDE`] returns [`ParticlePredictions`](crate::ParticlePredictions),
+/// whose point is the (weighted) particle mean, built on each call.
+///
+/// The trait has no likelihood: a stochastic model's likelihood is not a
+/// function of any one set of predictions. Use [`Equation::log_likelihood`].
+pub trait PointPredictions {
+    /// One prediction per observation.
+    fn point(&self) -> Cow<'_, [Prediction]>;
+}
+
+/// The result of [`Equation::simulate`].
+#[derive(Debug, Clone)]
+pub struct Simulation<P> {
+    /// The subject's predictions.
+    pub predictions: P,
+    /// Log-likelihood of the subject's observations, when an observation
+    /// model was given.
+    pub log_likelihood: Option<f64>,
 }
 
 /// Trait for enabling prediction caching on equation types.
@@ -152,9 +166,10 @@ pub trait Cache: Sized {
 /// [`Parameters`](crate::Parameters) dereferences to a slice, so
 /// `&parameters` can be passed directly.
 pub trait Equation: Clone + Send + Sync + 'static {
-    /// Prediction container: [`SubjectPredictions`](crate::prelude::simulator::SubjectPredictions)
-    /// for deterministic models, a particle matrix for [`SDE`].
-    type P: Predictions;
+    /// Prediction container: [`SubjectPredictions`]
+    /// for deterministic models, [`ParticlePredictions`](crate::ParticlePredictions)
+    /// for [`SDE`].
+    type P: PointPredictions;
 
     /// Validated metadata attached to this equation, if any.
     fn metadata(&self) -> Option<&ValidatedModelMetadata>;
@@ -167,41 +182,40 @@ pub trait Equation: Clone + Send + Sync + 'static {
 
     /// Simulate a subject and return its predictions.
     ///
-    /// Results may be served from the equation's cache.
+    /// Results may be served from the equation's cache. An [`SDE`] returns
+    /// free-running particles.
     fn predict(&self, subject: &Subject, parameters: &[f64]) -> Result<Self::P, PharmsolError>;
 
-    /// Log-likelihood of the subject's observations.
+    /// Log-likelihood of the subject's observations under `observation_model`.
     ///
-    /// Uses observation-based sigma, appropriate for non-parametric algorithms.
-    /// For parametric algorithms (SAEM, FOCE), use [`crate::ResidualErrorModels`]
-    /// directly.
-    fn log_likelihood(
+    /// Deterministic equations sum the log-density of each observation given
+    /// its (possibly cached) prediction. An [`SDE`] returns its particle-filter
+    /// estimate. Usually `observation_model` is a [`crate::OutputModels`],
+    /// whose outputs take sigma from the observation (assay error) or from
+    /// the prediction (residual error).
+    ///
+    /// Errors if `observation_model` names an output this equation does not
+    /// declare, before simulating.
+    fn log_likelihood<O: ObservationModel + ?Sized>(
         &self,
         subject: &Subject,
         parameters: &[f64],
-        error_models: &AssayErrorModels,
+        observation_model: &O,
     ) -> Result<f64, PharmsolError>;
 
-    /// Simulate a subject and, when error models are given, also return the
-    /// likelihood (not log-likelihood) of its observations.
+    /// Simulate a subject and, when an observation model is given, also
+    /// return the log-likelihood of its observations from the same run.
     ///
-    /// The default scores the returned predictions, so it simulates once.
+    /// For deterministic equations this is [`Self::predict`] plus the sum of
+    /// observation log-densities. An [`SDE`] given an observation model runs
+    /// its particle filter once, uncached, and returns the filtered particles
+    /// with their weights alongside the likelihood estimate.
     fn simulate(
         &self,
         subject: &Subject,
         parameters: &[f64],
-        error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        if let Some(error_models) = error_models {
-            self.validate_error_models(error_models)?;
-        }
-        let predictions = self.predict(subject, parameters)?;
-        let likelihood = match error_models {
-            Some(error_models) => Some(predictions.log_likelihood(error_models)?.exp()),
-            None => None,
-        };
-        Ok((predictions, likelihood))
-    }
+        observation_model: Option<&dyn ObservationModel>,
+    ) -> Result<Simulation<Self::P>, PharmsolError>;
 
     /// Check that every label names one of this equation's outputs.
     ///
@@ -224,11 +238,39 @@ pub trait Equation: Clone + Send + Sync + 'static {
         Ok(())
     }
 
-    /// [`Self::validate_output_labels`] for an assay error-model set.
+    /// [`Self::validate_output_labels`] for an observation model.
     #[doc(hidden)]
-    fn validate_error_models(&self, error_models: &AssayErrorModels) -> Result<(), PharmsolError> {
-        self.validate_output_labels(error_models.labels())
+    fn validate_observation_model<O: ObservationModel + ?Sized>(
+        &self,
+        observation_model: &O,
+    ) -> Result<(), PharmsolError> {
+        observation_model.validate()?;
+        self.validate_output_labels(observation_model.labels())
     }
+}
+
+/// [`Equation::simulate`] for an equation whose predictions are
+/// deterministic: predict, then score the predictions.
+pub(crate) fn simulate_deterministic<E>(
+    equation: &E,
+    subject: &Subject,
+    parameters: &[f64],
+    observation_model: Option<&dyn ObservationModel>,
+) -> Result<Simulation<SubjectPredictions>, PharmsolError>
+where
+    E: Equation<P = SubjectPredictions>,
+{
+    if let Some(observation_model) = observation_model {
+        equation.validate_observation_model(observation_model)?;
+    }
+    let predictions = equation.predict(subject, parameters)?;
+    let log_likelihood = observation_model
+        .map(|observation_model| predictions.log_likelihood(observation_model))
+        .transpose()?;
+    Ok(Simulation {
+        predictions,
+        log_likelihood,
+    })
 }
 
 /// Hash parameter vectors to a u64 for cache key generation.

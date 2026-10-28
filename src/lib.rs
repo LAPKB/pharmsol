@@ -130,8 +130,10 @@ pub use crate::simulator::equation::{
     self,
     ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
     Analytical, AnalyticalKernel, Cache, Equation, ModelKind, ModelMetadata, ModelMetadataError,
-    NameDomain, Predictions, RouteInputPolicy, RouteKind, ValidatedModelMetadata, ODE, SDE,
+    NameDomain, PointPredictions, RouteInputPolicy, RouteKind, Simulation, ValidatedModelMetadata,
+    ODE, SDE,
 };
+pub use crate::simulator::likelihood::{ObservationModel, ParticlePredictions};
 pub use error::PharmsolError;
 pub use nalgebra::dmatrix;
 pub use parameters::{ParameterError, ParameterOrder, Parameters};
@@ -328,9 +330,10 @@ pub mod prelude {
     // Data submodule for organized access and backward compatibility
     pub mod data {
         pub use crate::data::{
-            error_model::{AssayErrorModel, AssayErrorModels},
+            error_model::AssayErrorModel,
+            output_model::{Family, OutputModel, OutputModels, Scale, Transform},
             parser::{read_pmetrics, DataError, DataRow, DataRowBuilder},
-            residual_error::{ResidualErrorModel, ResidualErrorModels},
+            residual_error::ResidualErrorModel,
             Covariates, Data, Event, Occasion, Subject,
         };
     }
@@ -338,8 +341,10 @@ pub mod prelude {
     // Direct data re-exports for convenience
     pub use crate::data::{
         builder::SubjectBuilderExt,
-        error_model::{AssayErrorModel, AssayErrorModels, ErrorPoly},
+        error_model::{AssayErrorModel, ErrorPoly},
         event::{AUCMethod, BLQRule, OutputLabel, Route},
+        output_model::{Family, OutputModel, OutputModels, Scale, Transform},
+        residual_error::ResidualErrorModel,
         Covariates, Data, Event, Interpolation, Occasion, Subject,
     };
 
@@ -360,7 +365,8 @@ pub mod prelude {
             equation::Equation,
             likelihood::{
                 log_likelihood_batch, log_likelihood_matrix, log_likelihood_subject, log_psi, psi,
-                PopulationPredictions, Prediction, SubjectPredictions,
+                ObservationModel, ParticlePredictions, PopulationPredictions, Prediction,
+                SubjectPredictions,
             },
         };
     }
@@ -371,9 +377,9 @@ pub mod prelude {
         equation::{
             self,
             ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
-            Equation,
+            Equation, PointPredictions, Simulation,
         },
-        likelihood::{Prediction, SubjectPredictions},
+        likelihood::{ObservationModel, ParticlePredictions, Prediction, SubjectPredictions},
     };
 
     // Analytical model functions

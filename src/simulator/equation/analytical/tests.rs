@@ -1,5 +1,6 @@
 use super::*;
 use crate::simulator::equation::{AttachMetadataError, ModelMetadataError};
+use crate::OutputModels;
 use crate::SubjectBuilderExt;
 use approx::assert_relative_eq;
 use diffsol::Vector;
@@ -132,8 +133,8 @@ fn infusion_inputs_match_state_dimension() {
 
 #[test]
 fn log_likelihood_matrix_reuses_cached_predictions() {
-    use crate::data::error_model::{AssayErrorModel, ErrorPoly};
     use crate::simulator::likelihood::log_likelihood_matrix;
+    use crate::OutputModel;
     use crate::{Cache, Data};
     use ndarray::array;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -167,12 +168,7 @@ fn log_likelihood_matrix_reuses_cached_predictions() {
         .observation(2.0, 3.5, 0)
         .build()]);
     let support_points = array![[0.2, 20.0], [0.3, 25.0]];
-    let error_models = AssayErrorModels::new()
-        .add(
-            0,
-            AssayErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 0.5),
-        )
-        .unwrap();
+    let error_models = OutputModels::new().with(0, OutputModel::assay([1.0, 0.1]).additive(0.5));
 
     let first =
         log_likelihood_matrix(&analytical, &data, &support_points, &error_models, false).unwrap();

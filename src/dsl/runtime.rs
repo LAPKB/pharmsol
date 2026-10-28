@@ -53,17 +53,17 @@
 //! # Ok::<(), pharmsol::dsl::RuntimeError>(())
 //! ```
 
+use std::borrow::Cow;
 use std::fmt;
 
-use ndarray::Array2;
 use thiserror::Error;
 
 use super::jit::{compile_execution_model_to_jit, JitCompileError};
 use super::model::{RuntimeAnalyticalModel, RuntimeOdeModel, RuntimeSdeModel};
 use super::model_info::RuntimeModelInfo;
 use crate::{
-    simulator::likelihood::{Prediction, SubjectPredictions},
-    Equation, Parameters, PharmsolError, Subject, ValidatedModelMetadata,
+    simulator::likelihood::{ParticlePredictions, Prediction, SubjectPredictions},
+    Equation, Parameters, PharmsolError, PointPredictions, Subject, ValidatedModelMetadata,
 };
 use pharmsol_dsl::{
     analyze_module, compile_analyzed_model, parse_module, AnalysisError, CompileError, Diagnostic,
@@ -72,12 +72,12 @@ use pharmsol_dsl::{
 
 /// Backend-neutral prediction output from a compiled runtime model.
 ///
-/// ODE and analytical models return subject predictions. SDE models return the
-/// particle matrix used by the stochastic workflow.
+/// ODE and analytical models return subject predictions. SDE models return
+/// free-running particle predictions.
 #[derive(Clone, Debug)]
 pub enum RuntimePredictions {
     Subject(SubjectPredictions),
-    Particles(Array2<Prediction>),
+    Particles(ParticlePredictions),
 }
 
 impl RuntimePredictions {
@@ -88,7 +88,7 @@ impl RuntimePredictions {
         }
     }
 
-    pub fn as_particles(&self) -> Option<&Array2<Prediction>> {
+    pub fn as_particles(&self) -> Option<&ParticlePredictions> {
         match self {
             Self::Particles(predictions) => Some(predictions),
             Self::Subject(_) => None,
@@ -102,10 +102,19 @@ impl RuntimePredictions {
         }
     }
 
-    pub fn into_particles(self) -> Option<Array2<Prediction>> {
+    pub fn into_particles(self) -> Option<ParticlePredictions> {
         match self {
             Self::Particles(predictions) => Some(predictions),
             Self::Subject(_) => None,
+        }
+    }
+}
+
+impl PointPredictions for RuntimePredictions {
+    fn point(&self) -> Cow<'_, [Prediction]> {
+        match self {
+            Self::Subject(predictions) => predictions.point(),
+            Self::Particles(predictions) => predictions.point(),
         }
     }
 }

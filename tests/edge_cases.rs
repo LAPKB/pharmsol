@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use ndarray::array;
 use pharmsol::prelude::simulator::log_likelihood_matrix;
 use pharmsol::prelude::*;
-use pharmsol::{equation, Analytical, Cache, Censor, Predictions, ODE, SDE};
+use pharmsol::{equation, Analytical, Cache, Censor, ODE, SDE};
 
 fn ode() -> ODE {
     ODE::new(
@@ -65,13 +65,8 @@ fn sde(nparticles: usize) -> SDE {
 
 const P: [f64; 3] = [0.5, 10.0, 0.0];
 
-fn error_models() -> AssayErrorModels {
-    AssayErrorModels::new()
-        .add(
-            0,
-            AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0),
-        )
-        .unwrap()
+fn error_models() -> OutputModels {
+    OutputModels::new().with(0, OutputModel::assay([1.0]))
 }
 
 fn assert_err_contains<T: std::fmt::Debug>(result: Result<T, PharmsolError>, needle: &str) {
@@ -266,8 +261,8 @@ fn sde_steps_never_cross_a_tiny_interval() {
         .observation(1.0 + 1e-12, 1.0, 0)
         .build();
     let predictions = sde(4).predict(&subject, &P).unwrap();
-    let means = predictions.get_predictions();
-    assert!((means[0].prediction() - means[1].prediction()).abs() < 1e-9);
+    let means = predictions.mean();
+    assert!((means[0] - means[1]).abs() < 1e-9);
 }
 
 #[test]

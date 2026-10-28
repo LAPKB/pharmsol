@@ -24,22 +24,15 @@ fn subject() -> Subject {
 
 const PARAMETERS: [(&str, f64); 2] = [("ke", 0.2), ("v", 20.0)];
 
-fn cp_error_models() -> AssayErrorModels {
-    AssayErrorModels::new()
-        .add(
-            "cp",
-            AssayErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 0.5),
-        )
-        .expect("cp error model")
+fn cp_error_models() -> OutputModels {
+    OutputModels::new().with("cp", OutputModel::assay([1.0, 0.1]).additive(0.5))
 }
 
-fn undeclared_error_models() -> AssayErrorModels {
-    AssayErrorModels::new()
-        .add(
-            "concentration",
-            AssayErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 0.5),
-        )
-        .expect("concentration error model")
+fn undeclared_error_models() -> OutputModels {
+    OutputModels::new().with(
+        "concentration",
+        OutputModel::assay([1.0, 0.1]).additive(0.5),
+    )
 }
 
 fn assert_unknown_label<T: std::fmt::Debug>(
@@ -70,9 +63,11 @@ fn assert_entry_points_agree(
     let log_likelihood = equation.log_likelihood(&subject, &parameters, &error_models)?;
     assert!(log_likelihood.is_finite(), "{name}: {log_likelihood}");
 
-    let (_, likelihood) = equation.simulate(&subject, &parameters, Some(&error_models))?;
-    let likelihood = likelihood.expect("simulate scores when given error models");
-    assert_relative_eq!(likelihood.ln(), log_likelihood, max_relative = 1e-10);
+    let simulated = equation
+        .simulate(&subject, &parameters, Some(&error_models))?
+        .log_likelihood
+        .expect("simulate scores when given error models");
+    assert_relative_eq!(simulated, log_likelihood, max_relative = 1e-10);
 
     let matrix = log_likelihood_matrix(equation, &data, &support_points, &error_models, false)?;
     assert_relative_eq!(matrix[[0, 0]], log_likelihood, max_relative = 1e-10);
@@ -87,7 +82,7 @@ fn assert_entry_points_agree(
         &format!("{name} simulate"),
         equation
             .simulate(&subject, &parameters, Some(&undeclared))
-            .map(|(_, likelihood)| likelihood),
+            .map(|simulation| simulation.log_likelihood),
         "concentration",
     );
     assert_unknown_label(
@@ -97,9 +92,9 @@ fn assert_entry_points_agree(
     );
 
     // Predictions without error models are still available.
-    let (predictions, likelihood) = equation.simulate(&subject, &parameters, None)?;
-    assert!(likelihood.is_none());
-    drop(predictions);
+    let simulation = equation.simulate(&subject, &parameters, None)?;
+    assert!(simulation.log_likelihood.is_none());
+    assert!(!simulation.predictions.point().is_empty());
     Ok(())
 }
 
@@ -218,7 +213,11 @@ fn assert_sde_cache_sees_polynomial_changes(
     );
 
     // Change only the polynomial; gamma/lambda and its fixed state stay put.
-    error_models.set_errorpoly("cp", ErrorPoly::new(5.0, 0.0, 0.0, 0.0))?;
+    error_models
+        .get_mut("cp")
+        .and_then(OutputModel::as_assay_mut)
+        .expect("cp has assay error")
+        .set_errorpoly(ErrorPoly::new(5.0, 0.0, 0.0, 0.0));
     let after = sde.log_likelihood(&subject, &parameters, &error_models)?;
     assert!(
         (after - first).abs() > 1e-6,
@@ -266,16 +265,16 @@ fn equations_without_metadata_accept_only_existing_output_numbers() -> Result<()
         .observation(1.0, 4.0, 0)
         .build();
     let parameters = [0.2, 20.0];
-    let error_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 0.5);
+    let error_model = OutputModel::assay([1.0, 0.1]).additive(0.5);
 
-    let by_position = AssayErrorModels::new().add(0, error_model.clone())?;
+    let by_position = OutputModels::new().with(0, error_model.clone());
     assert!(ode
         .log_likelihood(&subject, &parameters, &by_position)?
         .is_finite());
 
     // There is no second output, and an equation without metadata has no names.
     for label in ["1", "cp"] {
-        let error_models = AssayErrorModels::new().add(label, error_model.clone())?;
+        let error_models = OutputModels::new().with(label, error_model.clone());
         assert_unknown_label(
             &format!("label `{label}`"),
             ode.log_likelihood(&subject, &parameters, &error_models),

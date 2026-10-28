@@ -4,6 +4,8 @@
 //! likelihood cache. Between events every particle is advanced with adaptive
 //! Euler-Maruyama steps. At each observation the particles are weighted by
 //! the observation's likelihood and resampled (a bootstrap particle filter).
+//! The weights come from any [`ObservationModel`], so the filter scores
+//! assay error and residual error alike.
 //!
 //! Simulation is deterministic: the random streams depend only on the seed,
 //! the subject and the event being simulated, never on the parameters. Two
@@ -26,10 +28,10 @@ use em::EmScratch;
 use super::model::{
     fill_active_rates, prepare_occasion, with_subject_context, InfusionDose, Model, Step,
 };
-use super::{parameters_hash, Cache, Equation, Predictions, ValidatedModelMetadata};
-use crate::data::error_model::AssayErrorModels;
-use crate::prelude::simulator::Prediction;
+use super::{parameters_hash, Cache, Equation, Simulation, ValidatedModelMetadata};
+use crate::data::event::Observation;
 use crate::simulator::cache::{SdeLikelihoodCache, DEFAULT_CACHE_SIZE};
+use crate::simulator::likelihood::{ObservationModel, ParticlePredictions};
 use crate::simulator::V;
 use crate::{Covariates, Occasion, PharmsolError, Subject};
 
@@ -141,11 +143,11 @@ impl<M: SdeModel> SDE<M> {
     }
 
     /// Simulate a subject's particles; see [`Mode`].
-    fn run_particles(
+    fn run_particles<O: ObservationModel + ?Sized>(
         &self,
         subject: &Subject,
         parameters: &[f64],
-        mode: Mode,
+        mode: Mode<'_, O>,
     ) -> Result<ParticleRun, PharmsolError> {
         let in_context = |error| with_subject_context(&self.model, error, subject.id(), parameters);
         if self.nparticles == 0 {
@@ -159,7 +161,9 @@ impl<M: SdeModel> SDE<M> {
 
         let p = V::from_vec(parameters.to_vec(), NalgebraContext::new());
         let mut run = ParticleRun {
-            predictions: Vec::new(),
+            observations: Vec::new(),
+            values: Vec::new(),
+            weights: Vec::new(),
             log_likelihood: 0.0,
             streams: RandomStreams::new(self.seed, subject.hash()),
         };
@@ -173,11 +177,11 @@ impl<M: SdeModel> SDE<M> {
         Ok(run)
     }
 
-    fn simulate_occasion(
+    fn simulate_occasion<O: ObservationModel + ?Sized>(
         &self,
         occasion: &Occasion,
         p: &V,
-        mode: Mode,
+        mode: Mode<'_, O>,
         run: &mut ParticleRun,
     ) -> Result<(), PharmsolError> {
         let covariates = occasion.covariates();
@@ -205,7 +209,7 @@ impl<M: SdeModel> SDE<M> {
                 Step::Infusion(_) => {}
                 Step::Observation { observation, outeq } => {
                     fill_active_rates(&schedule.infusions, observation.time(), &mut rates);
-                    let first = run.predictions.len();
+                    let first = run.values.len();
                     for particle in &particles {
                         y.fill(0.0);
                         self.model.outputs(
@@ -217,27 +221,43 @@ impl<M: SdeModel> SDE<M> {
                             &rates,
                             &mut y,
                         )?;
-                        run.predictions.push(
-                            observation
-                                .to_prediction(y[outeq], particle.batch_as_slice(0).to_vec()),
-                        );
+                        run.values.push(y[outeq]);
                     }
 
-                    let error_models = mode
-                        .error_models()
+                    // Particles stay equally weighted unless the filter runs.
+                    let mut weights = None;
+                    let observation_model = mode
+                        .observation_model()
                         .filter(|_| run.log_likelihood > f64::NEG_INFINITY);
-                    if let Some(error_models) = error_models {
-                        let column = &run.predictions[first..];
-                        match filter(column, error_models, &mut run.streams.next())? {
-                            Some((log_mean, indices)) => {
-                                run.log_likelihood += log_mean;
-                                particles = indices.iter().map(|&i| particles[i].clone()).collect();
+                    if let Some(observation_model) = observation_model {
+                        let column = &run.values[first..];
+                        let rng = &mut run.streams.next();
+                        match filter(observation, column, observation_model, rng)? {
+                            Some(filtered) => {
+                                run.log_likelihood += filtered.log_mean;
+                                particles = filtered
+                                    .indices
+                                    .iter()
+                                    .map(|&i| particles[i].clone())
+                                    .collect();
+                                weights = Some(filtered.weights);
                             }
                             None => run.log_likelihood = f64::NEG_INFINITY,
                         }
                     }
-                    if !mode.keeps_predictions() {
-                        run.predictions.truncate(first);
+                    if mode.keeps_predictions() {
+                        run.observations.push(observation.clone());
+                        if mode.observation_model().is_some() {
+                            match weights {
+                                Some(weights) => run.weights.extend(weights),
+                                None => run.weights.extend(std::iter::repeat_n(
+                                    1.0 / self.nparticles as f64,
+                                    self.nparticles,
+                                )),
+                            }
+                        }
+                    } else {
+                        run.values.truncate(first);
                     }
                     if mode.stops_at_zero_likelihood() && run.log_likelihood == f64::NEG_INFINITY {
                         return Ok(());
@@ -309,14 +329,14 @@ impl<M: SdeModel> SDE<M> {
     }
 
     /// Cached particle-filter log-likelihood.
-    fn cached_log_likelihood(
+    fn cached_log_likelihood<O: ObservationModel + ?Sized>(
         &self,
         subject: &Subject,
         parameters: &[f64],
-        error_models: &AssayErrorModels,
+        observation_model: &O,
     ) -> Result<f64, PharmsolError> {
         let simulate = || {
-            self.run_particles(subject, parameters, Mode::Score(error_models))
+            self.run_particles(subject, parameters, Mode::Score(observation_model))
                 .map(|run| run.log_likelihood)
         };
         match &self.cache {
@@ -324,7 +344,7 @@ impl<M: SdeModel> SDE<M> {
                 let key = (
                     mix(mix(subject.hash(), self.seed), self.nparticles as u64),
                     parameters_hash(parameters),
-                    error_models.hash(),
+                    observation_model.cache_key(),
                 );
                 cache.get_or_try_insert(key, simulate)
             }
@@ -334,23 +354,30 @@ impl<M: SdeModel> SDE<M> {
 }
 
 /// What a particle run computes.
-#[derive(Clone, Copy)]
-enum Mode<'a> {
+enum Mode<'a, O: ?Sized> {
     /// Particles evolve independently; no likelihood.
     Predict,
     /// Run the particle filter (resample at every observation) for the
     /// likelihood only. Stops at the first observation no particle explains.
-    Score(&'a AssayErrorModels),
-    /// Run the particle filter and keep every prediction, through the whole
-    /// subject.
-    ScoreAndPredict(&'a AssayErrorModels),
+    Score(&'a O),
+    /// Run the particle filter and keep every prediction and weight, through
+    /// the whole subject.
+    ScoreAndPredict(&'a O),
 }
 
-impl<'a> Mode<'a> {
-    fn error_models(self) -> Option<&'a AssayErrorModels> {
+impl<O: ?Sized> Clone for Mode<'_, O> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<O: ?Sized> Copy for Mode<'_, O> {}
+
+impl<'a, O: ?Sized> Mode<'a, O> {
+    fn observation_model(self) -> Option<&'a O> {
         match self {
             Mode::Predict => None,
-            Mode::Score(error_models) | Mode::ScoreAndPredict(error_models) => Some(error_models),
+            Mode::Score(model) | Mode::ScoreAndPredict(model) => Some(model),
         }
     }
 
@@ -382,9 +409,14 @@ impl<W> ParticleScratch<W> {
 
 /// The outcome of simulating one subject.
 struct ParticleRun {
-    /// Predictions in observation order, `nparticles` per observation
+    /// The observations simulated (empty in [`Mode::Score`]).
+    observations: Vec<Observation>,
+    /// Predicted values in observation order, `nparticles` per observation
     /// (empty in [`Mode::Score`]).
-    predictions: Vec<Prediction>,
+    values: Vec<f64>,
+    /// Normalized filter weights, laid out like `values` (filled only in
+    /// [`Mode::ScoreAndPredict`]).
+    weights: Vec<f64>,
     log_likelihood: f64,
     streams: RandomStreams,
 }
@@ -392,32 +424,59 @@ struct ParticleRun {
 impl ParticleRun {
     /// Particle predictions with one row per particle and one column per
     /// observation.
-    fn into_matrix(self, nparticles: usize) -> Result<Array2<Prediction>, PharmsolError> {
-        let observations = self.predictions.len() / nparticles.max(1);
-        let by_observation = Array2::from_shape_vec((observations, nparticles), self.predictions)?;
-        Ok(by_observation
-            .reversed_axes()
-            .as_standard_layout()
-            .into_owned())
+    fn into_predictions(self, nparticles: usize) -> Result<ParticlePredictions, PharmsolError> {
+        let shape = (self.observations.len(), nparticles);
+        let by_particle = |values: Vec<f64>| -> Result<Array2<f64>, PharmsolError> {
+            Ok(Array2::from_shape_vec(shape, values)?
+                .reversed_axes()
+                .as_standard_layout()
+                .into_owned())
+        };
+        let weights = match self.weights.is_empty() {
+            true => None,
+            false => Some(by_particle(self.weights)?),
+        };
+        ParticlePredictions::new(self.observations, by_particle(self.values)?, weights)
     }
+}
+
+/// One observation's particles after weighting.
+struct Filtered {
+    /// Log of the mean particle likelihood.
+    log_mean: f64,
+    /// Normalized particle weights.
+    weights: Vec<f64>,
+    /// Indices of the resampled particles.
+    indices: Vec<usize>,
 }
 
 /// Weight one observation's particles and resample them.
 ///
-/// Returns the log of the mean particle likelihood and the indices of the
-/// resampled particles, or `None` when every particle has zero likelihood.
-fn filter(
-    predictions: &[Prediction],
-    error_models: &AssayErrorModels,
+/// Returns `None` when every particle has zero likelihood.
+fn filter<O: ObservationModel + ?Sized>(
+    observation: &Observation,
+    values: &[f64],
+    observation_model: &O,
     rng: &mut StdRng,
-) -> Result<Option<(f64, Vec<usize>)>, PharmsolError> {
-    let mut weights = Vec::with_capacity(predictions.len());
+) -> Result<Option<Filtered>, PharmsolError> {
+    let mut weights = Vec::with_capacity(values.len());
     let mut max_log_weight = f64::NEG_INFINITY;
-    for prediction in predictions {
+    for &value in values {
+        // A missing observation leaves every particle equally likely.
+        let log_density = match observation.value() {
+            None => Ok(0.0),
+            Some(observed) => observation_model.log_density(
+                observation.outeq(),
+                observed,
+                value,
+                observation.censoring(),
+                observation.errorpoly(),
+            ),
+        };
         // A particle the observation cannot have come from (including one
         // whose state diverged to NaN) gets zero weight.
-        let log_weight = match prediction.log_likelihood(error_models) {
-            Ok(log_likelihood) => log_likelihood,
+        let log_weight = match log_density {
+            Ok(log_density) => log_density,
             Err(PharmsolError::NonFiniteLikelihood(_)) => f64::NEG_INFINITY,
             Err(error) => return Err(error),
         };
@@ -434,7 +493,12 @@ fn filter(
     let total: f64 = weights.iter().sum();
     let log_mean = max_log_weight + (total / weights.len() as f64).ln();
     weights.iter_mut().for_each(|weight| *weight /= total);
-    Ok(Some((log_mean, systematic_resample(&weights, rng))))
+    let indices = systematic_resample(&weights, rng);
+    Ok(Some(Filtered {
+        log_mean,
+        weights,
+        indices,
+    }))
 }
 
 /// Systematic resampling: indices drawn from `weights` (summing to one) with
@@ -488,36 +552,6 @@ fn mix(a: u64, b: u64) -> u64 {
     z ^ (z >> 31)
 }
 
-impl Predictions for Array2<Prediction> {
-    /// Mean prediction across particles, one per observation.
-    fn get_predictions(&self) -> Vec<Prediction> {
-        if self.is_empty() || self.ncols() == 0 {
-            return Vec::new();
-        }
-
-        let mut result = Vec::with_capacity(self.ncols());
-        for column in self.columns() {
-            let mean = column.iter().map(Prediction::prediction).sum::<f64>() / self.nrows() as f64;
-            let mut prediction = column[0].clone();
-            prediction.set_prediction(mean);
-            result.push(prediction);
-        }
-        result
-    }
-
-    /// Log-likelihood of the mean prediction across particles.
-    ///
-    /// This scores the particle cloud as if it were deterministic. For the
-    /// particle-filter estimate, use [`Equation::log_likelihood`].
-    fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError> {
-        self.get_predictions()
-            .iter()
-            .filter(|prediction| prediction.observation().is_some())
-            .map(|prediction| prediction.log_likelihood(error_models))
-            .sum()
-    }
-}
-
 impl<M: SdeModel> Cache for SDE<M> {
     fn with_cache_capacity(mut self, size: usize) -> Self {
         self.cache = Some(SdeLikelihoodCache::new(size));
@@ -542,8 +576,7 @@ impl<M: SdeModel> Cache for SDE<M> {
 }
 
 impl<M: SdeModel> Equation for SDE<M> {
-    /// One row per particle, one column per observation.
-    type P = Array2<Prediction>;
+    type P = ParticlePredictions;
 
     fn metadata(&self) -> Option<&ValidatedModelMetadata> {
         self.model.metadata()
@@ -557,43 +590,54 @@ impl<M: SdeModel> Equation for SDE<M> {
         self.model.noutputs()
     }
 
-    /// Particle predictions without filtering: each particle follows its own
-    /// path through every observation.
+    /// Free-running particle predictions: each particle follows its own path
+    /// through every observation.
     fn predict(
         &self,
         subject: &Subject,
         parameters: &[f64],
-    ) -> Result<Array2<Prediction>, PharmsolError> {
-        self.run_particles(subject, parameters, Mode::Predict)?
-            .into_matrix(self.nparticles)
+    ) -> Result<ParticlePredictions, PharmsolError> {
+        self.run_particles::<dyn ObservationModel>(subject, parameters, Mode::Predict)?
+            .into_predictions(self.nparticles)
     }
 
-    /// Particle-filter estimate of the log-likelihood.
-    fn log_likelihood(
+    /// Particle-filter estimate of the log-likelihood, cached.
+    fn log_likelihood<O: ObservationModel + ?Sized>(
         &self,
         subject: &Subject,
         parameters: &[f64],
-        error_models: &AssayErrorModels,
+        observation_model: &O,
     ) -> Result<f64, PharmsolError> {
-        self.validate_error_models(error_models)?;
-        self.cached_log_likelihood(subject, parameters, error_models)
+        self.validate_observation_model(observation_model)?;
+        self.cached_log_likelihood(subject, parameters, observation_model)
     }
 
-    /// One particle-filter run: the filtered (resampled) particle predictions
-    /// and the likelihood estimate they produced. Uncached.
+    /// With an observation model, one particle-filter run: the filtered
+    /// particle predictions with their weights, and the log-likelihood
+    /// estimate they produced. Uncached. Without one, [`Self::predict`].
     fn simulate(
         &self,
         subject: &Subject,
         parameters: &[f64],
-        error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Array2<Prediction>, Option<f64>), PharmsolError> {
-        let Some(error_models) = error_models else {
-            return Ok((self.predict(subject, parameters)?, None));
+        observation_model: Option<&dyn ObservationModel>,
+    ) -> Result<Simulation<ParticlePredictions>, PharmsolError> {
+        let Some(observation_model) = observation_model else {
+            return Ok(Simulation {
+                predictions: self.predict(subject, parameters)?,
+                log_likelihood: None,
+            });
         };
-        self.validate_error_models(error_models)?;
-        let run = self.run_particles(subject, parameters, Mode::ScoreAndPredict(error_models))?;
-        let likelihood = run.log_likelihood.exp();
-        Ok((run.into_matrix(self.nparticles)?, Some(likelihood)))
+        self.validate_observation_model(observation_model)?;
+        let run = self.run_particles(
+            subject,
+            parameters,
+            Mode::ScoreAndPredict(observation_model),
+        )?;
+        let log_likelihood = run.log_likelihood;
+        Ok(Simulation {
+            predictions: run.into_predictions(self.nparticles)?,
+            log_likelihood: Some(log_likelihood),
+        })
     }
 }
 

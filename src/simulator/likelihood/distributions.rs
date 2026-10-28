@@ -102,6 +102,48 @@ pub fn lognormccdf(obs: f64, pred: f64, sigma: f64) -> Result<f64, ErrorModelErr
     }
 }
 
+/// `0.5 * I_x(nu/2, 1/2)` with `x = nu / (nu + t^2)`: the probability that a
+/// standard t variable is beyond `|t|` on one side.
+#[inline]
+fn t_tail(t: f64, nu: f64) -> Result<f64, ErrorModelError> {
+    let x = nu / (nu + t * t);
+    let tail = statrs::function::beta::checked_beta_reg(0.5 * nu, 0.5, x)
+        .map_err(|error| ErrorModelError::InvalidFamily(error.to_string()))?;
+    Ok(0.5 * tail)
+}
+
+/// Log-density of Student's t-distribution with location `pred`, scale
+/// `sigma` and `nu` degrees of freedom.
+#[inline]
+pub fn log_t_pdf(obs: f64, pred: f64, sigma: f64, nu: f64) -> Result<f64, ErrorModelError> {
+    use statrs::function::gamma::ln_gamma;
+    let t = (obs - pred) / sigma;
+    Ok(ln_gamma(0.5 * (nu + 1.0))
+        - ln_gamma(0.5 * nu)
+        - 0.5 * (nu * std::f64::consts::PI).ln()
+        - sigma.ln()
+        - 0.5 * (nu + 1.0) * (t * t / nu).ln_1p())
+}
+
+/// Log of the CDF of Student's t-distribution (see [`log_t_pdf`]).
+///
+/// Computed from the regularized incomplete beta function, so the lower tail
+/// keeps its precision far from the location.
+#[inline]
+pub fn log_t_cdf(obs: f64, pred: f64, sigma: f64, nu: f64) -> Result<f64, ErrorModelError> {
+    let t = (obs - pred) / sigma;
+    let tail = t_tail(t, nu)?;
+    Ok(if t < 0.0 { tail.ln() } else { (-tail).ln_1p() })
+}
+
+/// Log of the survival function of Student's t-distribution (see
+/// [`log_t_pdf`]).
+#[inline]
+pub fn log_t_sf(obs: f64, pred: f64, sigma: f64, nu: f64) -> Result<f64, ErrorModelError> {
+    // The t-distribution is symmetric about its location.
+    log_t_cdf(pred, obs, sigma, nu)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

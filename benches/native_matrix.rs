@@ -36,7 +36,7 @@ fn bench_log_likelihood<E: Equation>(
     model: &E,
     subject: &Subject,
     theta: &Parameters,
-    error_models: &AssayErrorModels,
+    error_models: &OutputModels,
 ) {
     b.iter(|| {
         black_box(
@@ -56,7 +56,7 @@ fn bench_matrix<E: Equation + Cache>(
     model: &E,
     data: &Data,
     theta: &ndarray::Array2<f64>,
-    error_models: &AssayErrorModels,
+    error_models: &OutputModels,
 ) {
     // Clearing outside the timed region keeps the cache's miss + insert cost in
     // the measurement, which is what a fresh NPAG cycle pays.

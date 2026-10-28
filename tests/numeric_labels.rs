@@ -1,8 +1,8 @@
 //! Numeric route and output labels are plain names.
 //!
 //! A model that declares output `1` is matched by data `OUTEQ=1`, by
-//! `AssayErrorModels::new().add("1", ...)` and by
-//! `ResidualErrorModels::new().add("1", ...)`, all by exact string match.
+//! `OutputModels::new().add("1", ...)` and by
+//! `OutputModels::new().add("1", ...)`, all by exact string match.
 //! Numeric labels have no relationship to declaration order and are never
 //! aliased to `input_<n>` / `outeq_<n>` or resolved by position.
 
@@ -10,7 +10,7 @@ use approx::assert_relative_eq;
 use ndarray::Array2;
 use pharmsol::prelude::simulator::log_likelihood_batch;
 use pharmsol::prelude::*;
-use pharmsol::{PharmsolError, Predictions, ResidualErrorModel, ResidualErrorModels};
+use pharmsol::{OutputModels, PharmsolError, PointPredictions, ResidualErrorModel};
 
 const PMETRICS_HEADER: &str = "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3";
 
@@ -60,26 +60,21 @@ fn named_one_cpt() -> equation::ODE {
     }
 }
 
-fn assay_error_models(label: &str) -> AssayErrorModels {
-    AssayErrorModels::new()
-        .add(
-            label,
-            AssayErrorModel::additive(ErrorPoly::new(0.1, 0.1, 0.0, 0.0), 0.0),
-        )
-        .expect("label-first assay error model")
+fn assay_error_models(label: &str) -> OutputModels {
+    OutputModels::new().with(label, OutputModel::assay([0.1, 0.1]))
 }
 
-fn residual_error_models(label: &str) -> ResidualErrorModels {
-    ResidualErrorModels::new().add(label, ResidualErrorModel::combined(0.2, 0.1))
+fn residual_error_models(label: &str) -> OutputModels {
+    OutputModels::new().with(label, ResidualErrorModel::combined(0.2, 0.1))
 }
 
 fn one_cpt_parameters(model: &equation::ODE) -> Parameters {
     Parameters::with_model(model, [("ke", 0.2), ("v", 10.0)]).expect("valid parameters")
 }
 
-fn prediction_values(predictions: &impl Predictions) -> Vec<f64> {
+fn prediction_values(predictions: &impl PointPredictions) -> Vec<f64> {
     predictions
-        .get_predictions()
+        .point()
         .iter()
         .map(|prediction| prediction.prediction())
         .collect()

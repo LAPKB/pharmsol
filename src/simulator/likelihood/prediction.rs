@@ -4,11 +4,11 @@
 //! observation-prediction pair along with metadata needed for likelihood
 //! calculation.
 
-use crate::data::error_model::AssayErrorModels;
 use crate::data::event::{Observation, OutputLabel};
+use crate::data::output_model::OutputModels;
 use crate::{Censor, ErrorPoly, PharmsolError};
 
-use super::distributions::{lognormccdf, lognormcdf, lognormpdf};
+use super::ObservationModel;
 
 /// Prediction holds an observation and its prediction at a single time point.
 ///
@@ -42,11 +42,6 @@ impl Prediction {
         self.prediction
     }
 
-    /// Set the predicted value
-    pub(crate) fn set_prediction(&mut self, prediction: f64) {
-        self.prediction = prediction;
-    }
-
     /// Get the output label of this prediction.
     pub fn outeq(&self) -> &OutputLabel {
         &self.outeq
@@ -78,20 +73,11 @@ impl Prediction {
         self.observation.map(|obs| (self.prediction - obs).powi(2))
     }
 
-    /// Calculate the log-likelihood of this prediction given an error model.
+    /// Calculate the log-likelihood of this prediction under an observation
+    /// model.
     ///
-    /// This method is numerically stable and handles:
-    /// - Regular observations: uses log-normal PDF
-    /// - BLOQ (below limit of quantification): uses log-CDF
-    /// - ALOQ (above limit of quantification): uses log-survival function
-    ///
-    /// # Error Model
-    /// Uses observation-based sigma from [`AssayErrorModels`], which is appropriate
-    /// for non-parametric algorithms (NPAG, NPOD). For parametric algorithms
-    /// (SAEM, FOCE), use [`crate::ResidualErrorModels`] directly.
-    ///
-    /// # Parameters
-    /// - `error_models`: The error models to use for sigma calculation
+    /// The density, censoring included, comes from the
+    /// [`ObservationModel`], usually an [`OutputModels`].
     ///
     /// # Returns
     /// The log-likelihood value, zero in the case of a missing observation
@@ -102,25 +88,20 @@ impl Prediction {
     /// let log_lik = prediction.log_likelihood(&error_models)?;
     /// ```
     #[inline]
-    pub fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError> {
+    pub fn log_likelihood<O: ObservationModel + ?Sized>(
+        &self,
+        model: &O,
+    ) -> Result<f64, PharmsolError> {
         // Missing observations don't contribute to log-likelihood (log(1) = 0)
-        let obs = match self.observation {
-            Some(obs) => obs,
-            None => return Ok(0.0),
-        };
-
-        let sigma = error_models.sigma(self)?;
-
-        let log_lik = match self.censoring {
-            Censor::None => lognormpdf(obs, self.prediction, sigma),
-            Censor::BLOQ => lognormcdf(obs, self.prediction, sigma)?,
-            Censor::ALOQ => lognormccdf(obs, self.prediction, sigma)?,
-        };
-
-        if log_lik.is_finite() {
-            Ok(log_lik)
-        } else {
-            Err(PharmsolError::NonFiniteLikelihood(log_lik))
+        match self.observation {
+            Some(observation) => model.log_density(
+                &self.outeq,
+                observation,
+                self.prediction,
+                self.censoring,
+                self.errorpoly,
+            ),
+            None => Ok(0.0),
         }
     }
 
@@ -139,7 +120,7 @@ impl Prediction {
         since = "0.23.0",
         note = "Use log_likelihood() instead for better numerical stability"
     )]
-    pub fn likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError> {
+    pub fn likelihood(&self, error_models: &OutputModels) -> Result<f64, PharmsolError> {
         let log_lik = self.log_likelihood(error_models)?;
         let lik = log_lik.exp();
 
@@ -217,7 +198,7 @@ impl std::fmt::Display for Prediction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::error_model::{AssayErrorModel, ErrorPoly};
+    use crate::OutputModel;
 
     fn create_test_prediction(obs: f64, pred: f64) -> Prediction {
         Prediction {
@@ -232,13 +213,8 @@ mod tests {
         }
     }
 
-    fn create_error_models() -> AssayErrorModels {
-        AssayErrorModels::new()
-            .add(
-                0,
-                AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0),
-            )
-            .unwrap()
+    fn create_error_models() -> OutputModels {
+        OutputModels::new().with(0, OutputModel::assay([1.0]))
     }
 
     #[test]

@@ -1146,11 +1146,8 @@ fn likelihood_calculation_matches_analytical() {
         "likelihood_calculation",
     );
 
-    let error_models = AssayErrorModels::default()
-        .add(
-            "cp",
-            AssayErrorModel::additive(ErrorPoly::new(0.0, 0.1, 0.0, 0.0), 0.0),
-        )
+    let error_models = OutputModels::default()
+        .add("cp", OutputModel::assay([0.0, 0.1]))
         .unwrap();
 
     let analytical_params = parameters_for_analytical(

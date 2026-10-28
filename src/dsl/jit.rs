@@ -1432,7 +1432,7 @@ mod tests {
     use super::*;
     use crate::equation::ode::{ExplicitRkTableau, OdeSolver};
     use crate::simulator::equation::analytical::one_compartment_with_absorption;
-    use crate::simulator::equation::{Equation, Predictions as PredictionTrait};
+    use crate::simulator::equation::Equation;
     use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
     use crate::{equation, Parameters, Subject, SubjectBuilderExt, ODE, SDE};
     use approx::assert_relative_eq;
@@ -2436,7 +2436,7 @@ model analytical_mixed {
 
     #[test]
     fn jit_and_native_sde_particle_filters_agree() {
-        use crate::{AssayErrorModel, AssayErrorModels, ErrorPoly};
+        use crate::{OutputModel, OutputModels};
 
         let model = load_corpus_model("vanco_sde");
         let jit = compile_sde_model_to_jit(&model)
@@ -2495,12 +2495,7 @@ model analytical_mixed {
             .observation(2.0, 0.045, "cp")
             .observation(4.0, 0.03, "cp")
             .build();
-        let error_models = AssayErrorModels::new()
-            .add(
-                "cp",
-                AssayErrorModel::additive(ErrorPoly::new(0.01, 0.0, 0.0, 0.0), 0.0),
-            )
-            .unwrap();
+        let error_models = OutputModels::new().with("cp", OutputModel::assay([0.01]));
         let support = [1.1, 0.2, 0.12, 0.08, 15.0, 0.3];
 
         let jit_ll = jit
@@ -2608,16 +2603,12 @@ model analytical_mixed {
             .predict(&reference_subject, &support)
             .expect("reference sde predictions");
 
-        for (jit_pred, reference_pred) in jit_predictions
-            .get_predictions()
-            .iter()
-            .zip(reference_predictions.get_predictions())
+        for (jit_mean, reference_mean) in jit_predictions
+            .mean()
+            .into_iter()
+            .zip(reference_predictions.mean())
         {
-            assert_relative_eq!(
-                jit_pred.prediction(),
-                reference_pred.prediction(),
-                max_relative = 1e-4
-            );
+            assert_relative_eq!(jit_mean, reference_mean, max_relative = 1e-4);
         }
     }
 }

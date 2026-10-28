@@ -1,7 +1,7 @@
 //! Nelder‑Mead parameter refinement for pharmacometric models.
 //!
 //! This module provides a [`ParameterOptimizer`] that refines a single parameter
-//! Given an [`Equation`], observed [`Data`], and [`AssayErrorModels`] via
+//! Given an [`Equation`], observed [`Data`], and [`OutputModels`] via
 //! Nelder‑Mead optimization in log‑space. The optimizer finds the parameter vector
 //! that minimizes the negative log-likelihood of the model predictions against the data,
 //! as measured by the provided error models.
@@ -13,13 +13,13 @@ use argmin::{
 
 use ndarray::{Array1, Axis};
 
-use crate::{prelude::simulator::log_likelihood_matrix, AssayErrorModels, Data, Equation};
+use crate::{prelude::simulator::log_likelihood_matrix, Data, Equation, OutputModels};
 
 /// Optimizer that refines a single parameter vector against observed data.
 pub struct ParameterOptimizer<'a, E: Equation> {
     equation: &'a E,
     data: &'a Data,
-    sig: &'a AssayErrorModels,
+    sig: &'a OutputModels,
     pyl: &'a Array1<f64>,
 }
 
@@ -62,7 +62,7 @@ impl<'a, E: Equation> ParameterOptimizer<'a, E> {
     pub fn new(
         equation: &'a E,
         data: &'a Data,
-        sig: &'a AssayErrorModels,
+        sig: &'a OutputModels,
         pyl: &'a Array1<f64>,
     ) -> Self {
         Self {

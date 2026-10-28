@@ -6,10 +6,11 @@
 use ndarray::{Array2, Axis, ShapeBuilder};
 use rayon::prelude::*;
 
-use crate::data::error_model::AssayErrorModels;
+use crate::data::output_model::OutputModels;
 use crate::{Data, Equation, PharmsolError};
 
 use super::progress::ProgressTracker;
+use super::ObservationModel;
 
 /// Calculate the log-likelihood matrix for all subjects and support points.
 ///
@@ -26,7 +27,8 @@ use super::progress::ProgressTracker;
 /// - `equation`: The equation to use for simulation
 /// - `subjects`: The subject data
 /// - `support_points`: The support points to evaluate (rows = support points, cols = parameters)
-/// - `error_models`: The error models to use (observation-based sigma)
+/// - `error_models`: The observation model, usually [`OutputModels`]
+///   (observation-based sigma)
 /// - `progress`: Whether to display a progress bar during computation
 ///
 /// # Returns
@@ -49,11 +51,11 @@ use super::progress::ProgressTracker;
 ///     false
 /// )?;
 /// ```
-pub fn log_likelihood_matrix(
+pub fn log_likelihood_matrix<O: ObservationModel + ?Sized>(
     equation: &impl Equation,
     subjects: &Data,
     support_points: &Array2<f64>,
-    error_models: &AssayErrorModels,
+    error_models: &O,
     progress: bool,
 ) -> Result<Array2<f64>, PharmsolError> {
     let n_support_points = support_points.nrows();
@@ -115,7 +117,7 @@ pub fn log_psi(
     equation: &impl Equation,
     subjects: &Data,
     support_points: &Array2<f64>,
-    error_models: &AssayErrorModels,
+    error_models: &OutputModels,
     progress: bool,
 ) -> Result<Array2<f64>, PharmsolError> {
     log_likelihood_matrix(equation, subjects, support_points, error_models, progress)
@@ -136,7 +138,7 @@ pub fn psi(
     equation: &impl Equation,
     subjects: &Data,
     support_points: &Array2<f64>,
-    error_models: &AssayErrorModels,
+    error_models: &OutputModels,
     progress: bool,
 ) -> Result<Array2<f64>, PharmsolError> {
     let log_psi_matrix =
@@ -150,8 +152,8 @@ pub fn psi(
 mod tests {
     use super::log_likelihood_matrix;
     use crate::data::builder::SubjectBuilderExt;
-    use crate::data::error_model::{AssayErrorModel, ErrorPoly};
-    use crate::{fa, lag, metadata, AssayErrorModels, Data, ModelKind, ParameterOrder, ODE};
+    use crate::OutputModel;
+    use crate::{fa, lag, metadata, Data, ModelKind, OutputModels, ParameterOrder, ODE};
     use ndarray::array;
 
     fn likelihood_named_order_ode() -> ODE {
@@ -179,13 +181,8 @@ mod tests {
         .expect("attach metadata")
     }
 
-    fn likelihood_error_models() -> AssayErrorModels {
-        AssayErrorModels::new()
-            .add(
-                "cp",
-                AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
-            )
-            .expect("add error model")
+    fn likelihood_error_models() -> OutputModels {
+        OutputModels::new().with("cp", OutputModel::assay([0.0, 1.0]))
     }
 
     #[test]

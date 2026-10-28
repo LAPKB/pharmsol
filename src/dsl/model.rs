@@ -1057,7 +1057,7 @@ mod tests {
         prelude::SubjectPredictions,
         Parameters, Subject,
     };
-    use crate::{AssayErrorModels, Data, Equation};
+    use crate::{Data, Equation, OutputModels};
     use ndarray::array;
     use pharmsol_dsl::execution::ModelFunctionKind;
     use pharmsol_dsl::{
@@ -1574,7 +1574,7 @@ mod tests {
             &model,
             &Data::new(vec![subject]),
             &array![[0.2, 20.0]],
-            &AssayErrorModels::new(),
+            &OutputModels::new(),
             false,
         )
         .expect("matrix should be served from the cache");

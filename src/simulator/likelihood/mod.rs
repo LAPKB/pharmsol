@@ -1,17 +1,23 @@
 //! Likelihood calculation module for pharmacometric analyses.
 //!
 //! This module provides functions and types for computing log-likelihoods
-//! in pharmacometric population modeling. It supports both:
+//! in pharmacometric population modeling. Observations are scored with an
+//! [`ObservationModel`], usually a [`crate::OutputModels`] whose outputs take
+//! sigma from the observation (assay error, typical for non-parametric
+//! algorithms such as NPAG, NPOD) or from the prediction (residual error,
+//! typical for parametric algorithms such as SAEM, FOCE).
 //!
-//! - **Non-parametric algorithms** (NPAG, NPOD): Use [`ErrorModels`] with observation-based sigma
-//! - **Parametric algorithms** (SAEM, FOCE): Use [`ResidualErrorModels`] with prediction-based sigma
+//! Every function here accepts any [`ObservationModel`].
+//! All of them score subjects through [`Equation::log_likelihood`], so a
+//! deterministic equation sums the observation log-densities of its
+//! (cached) predictions and an [`SDE`](crate::SDE) runs its particle filter.
 //!
-//! # Module Organization
+//! # Types
 //!
-//! - [`distributions`]: Statistical distribution functions (log-normal PDF, CDF)
-//! - [`prediction`]: Single observation-prediction pairs
-//! - [`subject`]: Subject-level prediction collections
-//! - [`matrix`]: Population-level log-likelihood matrix computation
+//! - [`Prediction`]: Single observation-prediction pairs
+//! - [`SubjectPredictions`]: A deterministic subject's predictions
+//! - [`ParticlePredictions`]: A stochastic subject's particle predictions
+//! - [`ObservationModel`]: The distribution of observations around predictions
 //!
 //! # Key Functions
 //!
@@ -64,8 +70,10 @@
 //! The deprecated `likelihood()` and `psi()` functions are provided for
 //! backward compatibility but should be avoided in new code.
 
-mod distributions;
+pub(crate) mod distributions;
 mod matrix;
+pub(crate) mod observation;
+mod particles;
 mod prediction;
 mod progress;
 mod subject;
@@ -76,38 +84,45 @@ pub use matrix::log_likelihood_matrix;
 pub use matrix::log_psi;
 #[allow(deprecated)]
 pub use matrix::psi;
+pub use observation::ObservationModel;
+pub use particles::ParticlePredictions;
 pub use prediction::Prediction;
 pub use subject::{PopulationPredictions, SubjectPredictions};
 
 use ndarray::{Array2, Axis};
 use rayon::prelude::*;
 
-use crate::{Data, Equation, PharmsolError, Predictions, Subject};
+use crate::{Data, Equation, PharmsolError, Subject};
 
 /// Compute log-likelihoods for all subjects in parallel, where each subject
 /// has its own parameter vector.
 ///
-/// This function simulates each subject with their individual parameters and
-/// computes log-likelihood using prediction-based sigma (appropriate for
-/// parametric algorithms like SAEM, FOCE).
+/// Each subject is scored with [`Equation::log_likelihood`], so cached
+/// predictions are reused without copying them and an [`SDE`](crate::SDE)
+/// is scored with its particle filter. Usually `observation_model` is a
+/// [`crate::OutputModels`] with residual (prediction-based) error, as
+/// parametric algorithms like SAEM and FOCE use, but any [`ObservationModel`]
+/// works.
 ///
 /// # Parameters
 /// - `equation`: The equation to use for simulation
 /// - `subjects`: The subject data (N subjects)
 /// - `parameters`: Parameter vectors for each subject (N × P matrix, row i = params for subject i)
-/// - `residual_error_models`: The residual error models (prediction-based sigma)
+/// - `observation_model`: The observation model, e.g. residual error models
 ///
 /// # Returns
 /// A vector of N log-likelihoods, one per subject. Returns `f64::NEG_INFINITY`
-/// for subjects where simulation fails.
+/// for subjects where simulation or scoring fails. Errors if the parameter
+/// matrix does not have one row per subject, or if the observation model
+/// names an output the equation does not declare.
 ///
 /// # Example
 /// ```ignore
 /// use pharmsol::prelude::simulator::log_likelihood_batch;
-/// use pharmsol::{ResidualErrorModel, ResidualErrorModels};
+/// use pharmsol::{OutputModels, ResidualErrorModel};
 ///
-/// let residual_error = ResidualErrorModels::new()
-///     .add("cp", ResidualErrorModel::constant(0.5));
+/// let residual_error = OutputModels::new()
+///     .add("cp", ResidualErrorModel::constant(0.5))?;
 ///
 /// let log_liks = log_likelihood_batch(
 ///     &equation,
@@ -116,11 +131,11 @@ use crate::{Data, Equation, PharmsolError, Predictions, Subject};
 ///     &residual_error,
 /// )?;
 /// ```
-pub fn log_likelihood_batch(
+pub fn log_likelihood_batch<O: ObservationModel + ?Sized>(
     equation: &impl Equation,
     subjects: &Data,
     parameters: &Array2<f64>,
-    residual_error_models: &crate::ResidualErrorModels,
+    observation_model: &O,
 ) -> Result<Vec<f64>, PharmsolError> {
     let subject_slice = subjects.subjects_slice();
     let n_subjects = subject_slice.len();
@@ -133,21 +148,12 @@ pub fn log_likelihood_batch(
         )));
     }
 
-    equation.validate_output_labels(residual_error_models.labels())?;
+    equation.validate_observation_model(observation_model)?;
 
     let score_subject = |subject: &Subject, parameter_row: &[f64]| {
-        let predictions = match equation.predict(subject, parameter_row) {
-            Ok(preds) => preds,
-            Err(_) => return f64::NEG_INFINITY,
-        };
-
-        let predictions = predictions.get_predictions();
-        let obs_pred_pairs = predictions.iter().filter_map(|pred| {
-            pred.observation()
-                .map(|obs| (pred.outeq(), obs, pred.prediction()))
-        });
-
-        residual_error_models.total_log_likelihood(obs_pred_pairs)
+        equation
+            .log_likelihood(subject, parameter_row, observation_model)
+            .unwrap_or(f64::NEG_INFINITY)
     };
 
     let results: Vec<f64> = if let Some(flat_parameters) = parameters.as_slice() {
@@ -176,22 +182,22 @@ pub fn log_likelihood_batch(
     Ok(results)
 }
 
-/// Compute log-likelihood for a single subject using prediction-based sigma.
+/// Compute the log-likelihood for a single subject.
 ///
-/// This is the single-subject equivalent of [`log_likelihood_batch`].
-/// It simulates the model, extracts observation-prediction pairs, and computes
-/// the log-likelihood using [`crate::ResidualErrorModels`].
+/// This is the single-subject equivalent of [`log_likelihood_batch`]: it is
+/// [`Equation::log_likelihood`] with every error mapped to
+/// `f64::NEG_INFINITY`.
 ///
 /// # Parameters
 /// - `equation`: The equation to use for simulation
 /// - `subject`: The subject data
 /// - `params`: Parameter vector for this subject
-/// - `residual_error_models`: The residual error models (prediction-based sigma)
+/// - `observation_model`: The observation model, e.g. residual error models
 ///
 /// # Returns
 /// The log-likelihood for this subject. Returns `f64::NEG_INFINITY` on simulation error
-/// or when a residual error model names an output the equation does not declare
-/// (use [`log_likelihood_batch`] to get that error back).
+/// or when the observation model names an output the equation does not declare
+/// (use [`Equation::log_likelihood`] to get that error back).
 ///
 /// # Example
 /// ```ignore
@@ -204,41 +210,23 @@ pub fn log_likelihood_batch(
 ///     &residual_error_models,
 /// );
 /// ```
-pub fn log_likelihood_subject(
+pub fn log_likelihood_subject<O: ObservationModel + ?Sized>(
     equation: &impl Equation,
     subject: &Subject,
     params: &crate::Parameters,
-    residual_error_models: &crate::ResidualErrorModels,
+    observation_model: &O,
 ) -> f64 {
-    if equation
-        .validate_output_labels(residual_error_models.labels())
-        .is_err()
-    {
-        return f64::NEG_INFINITY;
-    }
-
-    // Simulate to get predictions
-    let predictions = match equation.predict(subject, params.as_slice()) {
-        Ok(preds) => preds,
-        Err(_) => return f64::NEG_INFINITY,
-    };
-
-    // Extract (outeq, observation, prediction) tuples and compute log-likelihood
-    let predictions = predictions.get_predictions();
-    let obs_pred_pairs = predictions.iter().filter_map(|pred| {
-        pred.observation()
-            .map(|obs| (pred.outeq(), obs, pred.prediction()))
-    });
-
-    residual_error_models.total_log_likelihood(obs_pred_pairs)
+    equation
+        .log_likelihood(subject, params.as_slice(), observation_model)
+        .unwrap_or(f64::NEG_INFINITY)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::error_model::{AssayErrorModel, ErrorPoly};
     use crate::data::event::{Observation, OutputLabel};
     use crate::Censor;
+    use crate::OutputModel;
 
     #[test]
     fn test_log_likelihood_equals_log_of_likelihood() {
@@ -255,12 +243,7 @@ mod tests {
         };
 
         // Create error model with additive error
-        let error_models = crate::AssayErrorModels::new()
-            .add(
-                0,
-                AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
-            )
-            .unwrap();
+        let error_models = crate::OutputModels::new().with(0, OutputModel::assay([0.0, 1.0]));
 
         #[allow(deprecated)]
         let lik = prediction.likelihood(&error_models).unwrap();
@@ -302,12 +285,7 @@ mod tests {
         ];
 
         let subject_predictions = SubjectPredictions::from(predictions);
-        let error_models = crate::AssayErrorModels::new()
-            .add(
-                0,
-                AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
-            )
-            .unwrap();
+        let error_models = crate::OutputModels::new().with(0, OutputModel::assay([0.0, 1.0]));
 
         #[allow(deprecated)]
         let lik = subject_predictions.likelihood(&error_models).unwrap();
@@ -326,7 +304,7 @@ mod tests {
     #[test]
     fn test_empty_predictions_have_neutral_log_likelihood() {
         let preds = SubjectPredictions::default();
-        let errors = crate::AssayErrorModels::new();
+        let errors = crate::OutputModels::new();
         assert_eq!(preds.log_likelihood(&errors).unwrap(), 0.0); // log(1) = 0
     }
 
@@ -336,8 +314,8 @@ mod tests {
         let obs = Observation::new(0.0, Some(1.0), 0, None, 0, Censor::None);
         preds.add_prediction(obs.to_prediction(1.0, vec![]));
 
-        let error_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0);
-        let errors = crate::AssayErrorModels::new().add(0, error_model).unwrap();
+        let error_model = OutputModel::assay([1.0]);
+        let errors = crate::OutputModels::new().with(0, error_model);
 
         let log_lik = preds.log_likelihood(&errors).unwrap();
         assert!(log_lik.is_finite());

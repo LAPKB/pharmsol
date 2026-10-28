@@ -39,7 +39,7 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
         .expect("valid named parameters");
     let predictions = sde.predict(&subject, &parameters)?;
 
-    println!("first prediction => {}", predictions[[0, 0]].prediction());
+    println!("first prediction => {}", predictions.values()[[0, 0]]);
     println!("prediction grid shape => {:?}", predictions.dim());
 
     Ok(())
