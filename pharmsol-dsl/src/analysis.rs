@@ -725,6 +725,21 @@ impl FunctionSignature {
     pub fn param_index(&self, name: &str) -> Option<usize> {
         self.params.iter().position(|param| param.name == name)
     }
+
+    /// Help text listing the parameters and their defaults, e.g.
+    /// ``"`pow` takes (base, exponent)"``.
+    pub fn usage(&self) -> String {
+        let params = self
+            .params
+            .iter()
+            .map(|param| match param.default {
+                Some(default) => format!("{} = {default}", param.name),
+                None => param.name.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("`{}` takes ({params})", self.name)
+    }
 }
 
 const X: &[FunctionParam] = &[FunctionParam::required("x")];

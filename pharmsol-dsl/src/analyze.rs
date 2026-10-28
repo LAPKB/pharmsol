@@ -3134,25 +3134,34 @@ fn bind_call_args<'a>(
                 ),
                 name.span,
             );
+            let suggest = |param: &str| {
+                AnalysisAssist::default().replacement_suggestion(
+                    name.span,
+                    param,
+                    format!("did you mean `{param}`?"),
+                    Applicability::MaybeIncorrect,
+                )
+            };
             let candidates = params
                 .iter()
-                .map(|param| {
-                    SimilarNameCandidate::new(
-                        param.name,
-                        AnalysisAssist::default().replacement_suggestion(
-                            name.span,
-                            param.name,
-                            format!("did you mean `{}`?", param.name),
-                            Applicability::MaybeIncorrect,
-                        ),
-                    )
-                })
+                .map(|param| SimilarNameCandidate::new(param.name, suggest(param.name)))
                 .collect();
-            let error = match best_similar_name_assist(&name.text, candidates) {
+            // Parameter names are short, so also suggest the one parameter that
+            // prefixes or extends the given name, such as `h` for `hil`.
+            let assist = best_similar_name_assist(&name.text, candidates).or_else(|| {
+                let mut prefixed = params.iter().filter(|param| {
+                    name.text.starts_with(param.name) || param.name.starts_with(&name.text)
+                });
+                match (prefixed.next(), prefixed.next()) {
+                    (Some(param), None) => Some(suggest(param.name)),
+                    _ => None,
+                }
+            });
+            let error = match assist {
                 Some(assist) => assist.apply(error),
                 None => error,
             };
-            return Err(error.with_help(signature_help(signature)));
+            return Err(error.with_help(signature.usage()));
         };
         if slots[index].is_some() {
             return Err(AnalysisError::new(
@@ -3182,7 +3191,7 @@ fn bind_call_args<'a>(
                 ),
                 callee.span,
             )
-            .with_help(signature_help(signature))),
+            .with_help(signature.usage())),
         })
         .collect()
 }
@@ -3198,19 +3207,6 @@ fn reject_named_arguments(
         )),
         None => Ok(()),
     }
-}
-
-fn signature_help(signature: &FunctionSignature) -> String {
-    let params = signature
-        .params
-        .iter()
-        .map(|param| match param.default {
-            Some(default) => format!("{} = {default}", param.name),
-            None => param.name.to_string(),
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("`{}` takes ({params})", signature.name)
 }
 
 #[cfg(test)]
@@ -4907,8 +4903,13 @@ model named_constants {
         );
         assert!(output_error("estimate_effect_2(1, 2, 3, 4)")
             .contains("function `estimate_effect_2` expects 5 argument(s), got 4"));
-        assert!(output_error("effect50(x = 1, 0.5)")
-            .contains("positional arguments must come before named arguments"));
+        let error = output_error("effect50(x = 1, 0.5)");
+        assert!(error.contains("positional arguments must come before named arguments"));
+        assert!(error.contains("`effect50` takes (min = 0, max = 1, e50 = 0.5, h = 1, x = 0.5)"));
+
+        assert!(output_error("effect50(hil = 2)").contains("did you mean `h`?"));
+        assert!(output_error("effect50(maximum = 2)").contains("did you mean `max`?"));
+        assert!(!output_error("effect50(m = 2)").contains("did you mean"));
     }
 
     #[test]

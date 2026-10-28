@@ -1304,7 +1304,7 @@ impl Parser {
             } else {
                 let value = self.parse_continuation_expr_after(&leader)?;
                 if let Some(named) = args.iter().rev().find_map(|arg| arg.name.as_ref()) {
-                    return Err(ParseError::new(
+                    let mut error = ParseError::new(
                         "positional arguments must come before named arguments",
                         value.span,
                     )
@@ -1312,7 +1312,11 @@ impl Parser {
                     .with_help(format!(
                         "move this argument before `{}`, or name it",
                         named.text
-                    )));
+                    ));
+                    if let Some(function) = BuiltinFunction::from_name(&callee.text) {
+                        error = error.with_help(function.signature().usage());
+                    }
+                    return Err(error);
                 }
                 args.push(CallArg::positional(value));
             }
