@@ -8,6 +8,9 @@ updates:
       cranelift:
         patterns:
           - "cranelift*"
+      diffsol:
+        patterns:
+          - "diffsol*"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

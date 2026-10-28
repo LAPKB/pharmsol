@@ -1,6 +1,6 @@
 //! Adaptive Euler-Maruyama integration.
 
-use diffsol::{NalgebraContext, Vector, VectorHost};
+use diffsol::{NalgebraContext, Vector};
 use rand::Rng;
 use rand_distr::{Distribution, StandardNormal};
 
@@ -116,7 +116,7 @@ where
     diffusion(t, x, diffusion_term)?;
 
     let sqrt_dt = dt.sqrt();
-    let x = x.as_mut_slice();
+    let x = x.batch_as_mut_slice(0);
     for i in 0..x.len() {
         let noise: f64 = StandardNormal.sample(rng);
         x[i] += drift_term[i] * dt + diffusion_term[i] * noise * sqrt_dt;

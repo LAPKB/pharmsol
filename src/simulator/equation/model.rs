@@ -12,7 +12,6 @@
 
 use std::fmt::Debug;
 
-use diffsol::VectorHost;
 use thiserror::Error;
 
 use crate::{
@@ -343,7 +342,7 @@ fn check_step(step: &Step) -> Result<(), PharmsolError> {
 ///
 /// An infusion counts as running on its closed interval `[start, end]`.
 pub(crate) fn fill_active_rates(infusions: &[InfusionDose], time: f64, rates: &mut V) {
-    let rates = rates.as_mut_slice();
+    let rates = rates.batch_as_mut_slice(0);
     rates.fill(0.0);
     for infusion in infusions {
         if time >= infusion.time && time <= infusion.end() {

@@ -9,7 +9,11 @@ use std::{
     cell::{Cell, RefCell},
     cmp::Ordering,
     marker::PhantomData,
+    sync::LazyLock,
 };
+
+/// Shared unbatched context; diffsol's `Op::context` hands it out by reference.
+static CONTEXT: LazyLock<NalgebraContext> = LazyLock::new(NalgebraContext::new);
 type M = NalgebraMat<f64>;
 type V = <M as MatrixCommon>::V;
 type C = <M as MatrixCommon>::C;
@@ -450,7 +454,7 @@ where
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext {}
+        &CONTEXT
     }
 }
 
@@ -475,7 +479,7 @@ impl Op for PmMass {
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext {}
+        &CONTEXT
     }
 }
 
@@ -501,7 +505,7 @@ impl Op for PmInit<'_> {
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext {}
+        &CONTEXT
     }
 }
 
@@ -532,7 +536,7 @@ impl Op for PmRoot {
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext {}
+        &CONTEXT
     }
 }
 
@@ -557,7 +561,7 @@ impl Op for PmOut {
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext {}
+        &CONTEXT
     }
 }
 
@@ -913,7 +917,7 @@ where
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext {}
+        &CONTEXT
     }
 }
 

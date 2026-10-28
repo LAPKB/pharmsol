@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use diffsol::{NalgebraContext, Vector, VectorHost};
+use diffsol::{NalgebraContext, Vector};
 use pharmsol_dsl::execution::ModelFunctionKind;
 use pharmsol_dsl::{
     AnalyticalStructureInputKind, AnalyticalStructureInputPlan, ModelKind, RouteKind,
@@ -653,7 +653,7 @@ impl Model for JitModel {
             0.0,
             input,
             time,
-            p.as_slice(),
+            p.batch_as_slice(0),
             cov,
         )
     }
@@ -672,7 +672,7 @@ impl Model for JitModel {
             1.0,
             input,
             time,
-            p.as_slice(),
+            p.batch_as_slice(0),
             cov,
         )
     }
@@ -687,18 +687,25 @@ impl Model for JitModel {
     ) -> Result<(), PharmsolError> {
         let zero_routes = std::mem::take(&mut ws.zero_routes);
         let result = self
-            .refresh_derived(ws, time, x.as_slice(), p.as_slice(), cov, &zero_routes)
+            .refresh_derived(
+                ws,
+                time,
+                x.batch_as_slice(0),
+                p.batch_as_slice(0),
+                cov,
+                &zero_routes,
+            )
             .and_then(|()| {
                 if !self.has_function(ModelFunctionKind::Init) {
                     return Ok(());
                 }
-                let x = x.as_mut_slice();
+                let x = x.batch_as_mut_slice(0);
                 unsafe {
                     self.call(
                         ModelFunctionKind::Init,
                         time,
                         x.as_ptr(),
-                        p.as_slice().as_ptr(),
+                        p.batch_as_slice(0).as_ptr(),
                         ws.covariates.as_ptr(),
                         zero_routes.as_ptr(),
                         ws.derived.as_ptr(),
@@ -744,11 +751,11 @@ impl Model for JitModel {
             ws,
             ModelFunctionKind::Outputs,
             time,
-            x.as_slice(),
-            p.as_slice(),
+            x.batch_as_slice(0),
+            p.batch_as_slice(0),
             cov,
-            rates.as_slice(),
-            y.as_mut_slice(),
+            rates.batch_as_slice(0),
+            y.batch_as_mut_slice(0),
         )
     }
 }
@@ -768,13 +775,13 @@ impl OdeModel for JitModel {
             ws,
             ModelFunctionKind::Dynamics,
             time,
-            x.as_slice(),
-            p.as_slice(),
+            x.batch_as_slice(0),
+            p.batch_as_slice(0),
             cov,
-            rates.as_slice(),
-            dx.as_mut_slice(),
+            rates.batch_as_slice(0),
+            dx.batch_as_mut_slice(0),
         )?;
-        self.inject_route_rates(dx.as_mut_slice(), rates.as_slice());
+        self.inject_route_rates(dx.batch_as_mut_slice(0), rates.batch_as_slice(0));
         Ok(())
     }
 }
@@ -826,8 +833,16 @@ impl AnalyticalModel for JitModel {
                 self.info.name
             ))
         })?;
-        self.refresh_derived(ws, time, x.as_slice(), p.as_slice(), cov, rates.as_slice())?;
-        let structural = project_analytical_parameters(&plan.projection, p.as_slice(), &ws.derived);
+        self.refresh_derived(
+            ws,
+            time,
+            x.batch_as_slice(0),
+            p.batch_as_slice(0),
+            cov,
+            rates.batch_as_slice(0),
+        )?;
+        let structural =
+            project_analytical_parameters(&plan.projection, p.batch_as_slice(0), &ws.derived);
         *x = (plan.kernel)(x, &structural, dt, rates, cov);
         Ok(())
     }
@@ -877,13 +892,13 @@ impl SdeModel for JitModel {
             ws,
             ModelFunctionKind::Drift,
             time,
-            x.as_slice(),
-            p.as_slice(),
+            x.batch_as_slice(0),
+            p.batch_as_slice(0),
             cov,
-            rates.as_slice(),
-            dx.as_mut_slice(),
+            rates.batch_as_slice(0),
+            dx.batch_as_mut_slice(0),
         )?;
-        self.inject_route_rates(dx.as_mut_slice(), rates.as_slice());
+        self.inject_route_rates(dx.batch_as_mut_slice(0), rates.batch_as_slice(0));
         Ok(())
     }
 
@@ -901,11 +916,11 @@ impl SdeModel for JitModel {
             ws,
             ModelFunctionKind::Diffusion,
             time,
-            x.as_slice(),
-            p.as_slice(),
+            x.batch_as_slice(0),
+            p.batch_as_slice(0),
             cov,
-            rates.as_slice(),
-            sigma.as_mut_slice(),
+            rates.batch_as_slice(0),
+            sigma.batch_as_mut_slice(0),
         )
     }
 }
@@ -1043,7 +1058,6 @@ mod tests {
         Parameters, Subject,
     };
     use crate::{AssayErrorModels, Data, Equation};
-    use diffsol::VectorHost;
     use ndarray::array;
     use pharmsol_dsl::execution::ModelFunctionKind;
     use pharmsol_dsl::{
@@ -1356,7 +1370,7 @@ mod tests {
     ) -> Vec<f64> {
         let plan = model.model().analytical.as_ref().expect("analytical plan");
         project_analytical_parameters(&plan.projection, support_point, derived)
-            .as_slice()
+            .batch_as_slice(0)
             .to_vec()
     }
 

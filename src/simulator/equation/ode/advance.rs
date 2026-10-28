@@ -426,7 +426,7 @@ where
     let state_scale = solver
         .state()
         .y
-        .as_slice()
+        .batch_as_slice(0)
         .iter()
         .fold(0.0_f64, |scale, value| scale.max(value.abs()));
     let material_tolerance = atol.abs() + rtol.abs() * state_scale;
