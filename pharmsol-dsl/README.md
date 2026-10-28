@@ -118,9 +118,9 @@ every argument is constant:
   are evaluated.
 - `effect50(min, max, e50, h, x)` is the sigmoid Emax (Hill) model
   `min + (max - min) * x^h / (e50^h + x^h)`. It returns `min` at `x = 0` and
-  the midpoint of `min` and `max` at `x = e50`. Every argument is optional,
-  defaulting to `min = 0`, `max = 1`, `e50 = 0.5`, `h = 1`, and `x = 0.5`, so
-  `effect50()` is `0.5`.
+  the midpoint of `min` and `max` at `x = e50`; any `x <= 0` returns `min`.
+  `x` is required, and the others default to `min = 0`, `max = 1`,
+  `e50 = 0.5`, and `h = 1`.
 
 Arguments can be passed by position, by parameter name, or both, with
 positional arguments first. Named arguments may come in any order, and

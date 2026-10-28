@@ -803,7 +803,7 @@ const EFFECT50_PARAMS: &[FunctionParam] = &[
     FunctionParam::optional("max", 1.0),
     FunctionParam::optional("e50", 0.5),
     FunctionParam::optional("h", 1.0),
-    FunctionParam::optional("x", 0.5),
+    FunctionParam::required("x"),
 ];
 
 /// Runtime-only utility functions provided by the main `pharmsol`
@@ -1120,16 +1120,23 @@ pub fn logit(p: f64) -> f64 {
 /// grows. It is evaluated as `1 / (1 + (e50 / x)^h)` so that large `x` or `h`
 /// saturate to `max` instead of overflowing to `inf / inf`.
 ///
-/// In the DSL every argument is optional, defaulting to `min = 0`, `max = 1`,
-/// `e50 = 0.5`, `h = 1`, and `x = 0.5`, so `effect50()` is `0.5`.
+/// Any `x <= 0` counts as no drug and returns `min`, so the slightly negative
+/// amounts an ODE solver can leave behind do not turn into `NaN`.
+///
+/// In the DSL `x` is required and the others default to `min = 0`,
+/// `max = 1`, `e50 = 0.5`, and `h = 1`.
 ///
 /// ```
 /// use pharmsol_dsl::effect50;
 ///
 /// assert_eq!(effect50(0.0, 1.0, 0.5, 1.0, 0.5), 0.5);
 /// assert_eq!(effect50(0.0, 1.0, 0.5, 1.0, 0.0), 0.0);
+/// assert_eq!(effect50(0.0, 1.0, 0.5, 2.5, -1e-12), 0.0);
 /// ```
 pub fn effect50(min: f64, max: f64, e50: f64, h: f64, x: f64) -> f64 {
+    if x <= 0.0 {
+        return min;
+    }
     min + (max - min) / (1.0 + (e50 / x).powf(h))
 }
 
@@ -1400,5 +1407,9 @@ mod tests {
         // Saturates instead of overflowing to inf / inf.
         assert_eq!(effect50(0.0, 1.0, 1.0, 400.0, 10.0), 1.0);
         assert_eq!(effect50(0.0, 1.0, 0.0, 1.0, 2.0), 1.0);
+
+        // No drug: zero or a tiny negative solver residue returns `min`.
+        assert_eq!(effect50(0.2, 1.0, 0.5, 2.5, -1e-12), 0.2);
+        assert_eq!(effect50(0.2, 1.0, 0.0, 1.0, 0.0), 0.2);
     }
 }

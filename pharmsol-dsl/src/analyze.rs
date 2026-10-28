@@ -4820,8 +4820,8 @@ model effect50_defaults {
     #[test]
     fn effect50_binds_named_arguments_and_defaults() {
         for (expr, expected) in [
-            ("effect50()", 0.5),
             ("effect50(x = 0.5)", 0.5),
+            ("effect50(x = -1e-12, h = 2.5, min = 3)", 3.0),
             ("effect50(0, 1, 0.5, 1, 0.5)", 0.5),
             ("effect50(2, 10, h = 2.5, x = 3, e50 = 3)", 6.0),
             ("effect50(x = 0)", 0.0),
@@ -4910,7 +4910,7 @@ model named_constants {
         let error = output_error("effect50(ec50 = 2)");
         assert!(error.contains("function `effect50` has no parameter named `ec50`"));
         assert!(error.contains("did you mean `e50`?"));
-        assert!(error.contains("`effect50` takes (min = 0, max = 1, e50 = 0.5, h = 1, x = 0.5)"));
+        assert!(error.contains("`effect50` takes (min = 0, max = 1, e50 = 0.5, h = 1, x)"));
 
         assert!(output_error("effect50(0.1, min = 0.2)")
             .contains("argument `min` is given more than once"));
@@ -4920,6 +4920,9 @@ model named_constants {
         assert!(output_error("effect50(1, 2, 3, 4, 5, 6)")
             .contains("function `effect50` expects at most 5 argument(s), got 6"));
         assert!(output_error("effect50(x = true)").contains("`effect50` argument must be numeric"));
+        assert!(output_error("effect50(e50 = 2, h = 3)")
+            .contains("function `effect50` is missing argument `x`"));
+        assert!(output_error("effect50()").contains("function `effect50` is missing argument `x`"));
         assert!(output_error("exp()").contains("function `exp` expects 1 argument(s), got 0"));
         assert!(
             output_error("pow(base = 2)").contains("function `pow` is missing argument `exponent`")
@@ -4928,7 +4931,7 @@ model named_constants {
             .contains("function `estimate_effect_2` expects 5 argument(s), got 4"));
         let error = output_error("effect50(x = 1, 0.5)");
         assert!(error.contains("positional arguments must come before named arguments"));
-        assert!(error.contains("`effect50` takes (min = 0, max = 1, e50 = 0.5, h = 1, x = 0.5)"));
+        assert!(error.contains("`effect50` takes (min = 0, max = 1, e50 = 0.5, h = 1, x)"));
 
         assert!(output_error("effect50(hil = 2)").contains("did you mean `h`?"));
         assert!(output_error("effect50(maximum = 2)").contains("did you mean `max`?"));

@@ -77,7 +77,16 @@ fn jit_ifelse_selects_a_branch_from_runtime_conditions() {
 
 #[test]
 fn jit_effect50_binds_named_arguments_and_defaults() {
-    assert_relative_eq!(predict(&compile("effect50()")), 0.5, max_relative = 1e-12);
+    assert_relative_eq!(
+        predict(&compile("effect50(x = 0.5)")),
+        0.5,
+        max_relative = 1e-12
+    );
+    // A tiny negative amount left by the solver means no drug, not NaN.
+    assert_relative_eq!(
+        predict(&compile("effect50(p3, p4, x = -1e-12, h = 2.5)")),
+        0.4
+    );
     assert_relative_eq!(
         predict(&compile("effect50(p1, p2, p3, p4, p5)")),
         effect50(0.7, 1.3, 0.4, 2.2, 0.9),
