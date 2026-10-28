@@ -2,6 +2,7 @@ use super::authoring;
 use super::diagnostic::{Applicability, DiagnosticSuggestion, ParseError, Span, TextEdit};
 use super::lexer::{lex, Token, TokenKind};
 use super::syntax::*;
+use crate::analysis::BuiltinFunction;
 
 /// Parses DSL source text into a syntax tree of one or more models.
 ///
@@ -1184,10 +1185,13 @@ impl Parser {
                         return Err(ParseError::new("only identifiers can be called", expr.span));
                     }
                 };
-                let mut args = self.parse_expr_list(&open, TokenKindMatcher::RPAREN)?;
+                let mut args = self.parse_call_args(&callee, &open)?;
                 if takes_route_label_argument(&callee.text) && args.len() == 1 {
                     let arg = args.pop().expect("one argument");
-                    args.push(self.integer_literal_as_label(arg));
+                    args.push(CallArg {
+                        name: arg.name,
+                        value: self.integer_literal_as_label(arg.value),
+                    });
                 }
                 let close = self.expect_closing(
                     |kind| matches!(kind, TokenKind::RParen),
@@ -1277,6 +1281,65 @@ impl Parser {
             break;
         }
         Ok(args)
+    }
+
+    /// Parses call arguments: positional ones first, then `name = value` ones.
+    fn parse_call_args(
+        &mut self,
+        callee: &Ident,
+        open: &Token,
+    ) -> Result<Vec<CallArg>, ParseError> {
+        let mut args: Vec<CallArg> = Vec::new();
+        if self.at(TokenKindMatcher::RPAREN.matches) {
+            return Ok(args);
+        }
+
+        let mut leader = open.clone();
+        loop {
+            if self.at_named_argument(callee) {
+                let name = self.parse_ident()?;
+                let eq = self.expect_simple(|kind| matches!(kind, TokenKind::Eq), "`=`")?;
+                let value = self.parse_continuation_expr_after(&eq)?;
+                args.push(CallArg::named(name, value));
+            } else {
+                let value = self.parse_continuation_expr_after(&leader)?;
+                if let Some(named) = args.iter().rev().find_map(|arg| arg.name.as_ref()) {
+                    return Err(ParseError::new(
+                        "positional arguments must come before named arguments",
+                        value.span,
+                    )
+                    .with_context_label(named.span, "named argument given here")
+                    .with_help(format!(
+                        "move this argument before `{}`, or name it",
+                        named.text
+                    )));
+                }
+                args.push(CallArg::positional(value));
+            }
+            if let Some(comma) = self.take_if(|kind| matches!(kind, TokenKind::Comma)) {
+                leader = comma;
+                continue;
+            }
+            break;
+        }
+        Ok(args)
+    }
+
+    /// Whether the next tokens are `name =`. On a new line that would
+    /// otherwise start the next statement, `name` must also be a parameter of
+    /// the called built-in, so a missing `)` is still reported there.
+    fn at_named_argument(&self, callee: &Ident) -> bool {
+        let Some(TokenKind::Ident(name)) = self.peek_kind() else {
+            return false;
+        };
+        let followed_by_eq = self
+            .tokens
+            .get(self.index + 1)
+            .is_some_and(|token| matches!(token.kind, TokenKind::Eq));
+        followed_by_eq
+            && (!self.current_layout_boundary_starts_here()
+                || BuiltinFunction::from_name(&callee.text)
+                    .is_some_and(|function| function.signature().param_index(name).is_some()))
     }
 
     fn peek_binary_op(&self) -> Option<(BinaryOp, u8, bool)> {

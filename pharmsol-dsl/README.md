@@ -107,15 +107,34 @@ Mathematical functions take numeric arguments, return real values (`abs`,
 every argument is constant:
 
 - `abs`, `ceil`, `floor`, `round`, `exp`, `ln` (alias `log`), `log10`,
-  `log2`, `sqrt`, `sin`, `cos`, `tan` take one argument.
-- `min`, `max`, and `pow` take two arguments.
+  `log2`, `sqrt`, `sin`, `cos`, `tan` take one argument, `x`.
+- `min(a, b)`, `max(a, b)`, and `pow(base, exponent)` take two.
 - `effect50(min, max, e50, h, x)` is the sigmoid Emax (Hill) model
   `min + (max - min) * x^h / (e50^h + x^h)`. It returns `min` at `x = 0` and
-  the midpoint of `min` and `max` at `x = e50`; for example,
-  `effect50(0, 1, 0.5, 1, 0.5)` is `0.5`.
+  the midpoint of `min` and `max` at `x = e50`. Every argument is optional,
+  defaulting to `min = 0`, `max = 1`, `e50 = 0.5`, `h = 1`, and `x = 0.5`, so
+  `effect50()` is `0.5`.
+
+Arguments can be passed by position, by parameter name, or both, with
+positional arguments first. Named arguments may come in any order, and
+omitted ones take their default:
+
+```text
+out(effect) = effect50(x = central / v, e50 = ec50, h = gamma)
+out(effect) = effect50(e0, emax, x = central / v, e50 = ec50)
+```
 
 Function names are reserved and cannot name parameters, states, or other
 symbols.
+
+### Adding a built-in function
+
+Each function is described once by its `FunctionSignature` (name, parameters
+with optional defaults, and result type), which drives name lookup, reserved
+names, argument binding, and error messages. To add a math function, add a
+`MathFunction` variant, its signature, and its `MathFunction::evaluate` arm;
+the main `pharmsol` crate then needs only the host function for its JIT, and a
+test checks the JIT against `evaluate` for every function.
 
 ## Runtime-only utility functions
 
@@ -123,6 +142,8 @@ The DSL supports the same effect functions as the Rust API:
 
 - `estimate_effect_2(u, v, alpha, h1, h2)` takes five numeric arguments.
 - `estimate_effect_3(a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3)` takes ten numeric arguments.
+
+Both accept named arguments, and none of their arguments are optional.
 
 These functions calculate a combined effect using supplied interaction
 coefficients; they do not fit those coefficients. Both return real values.

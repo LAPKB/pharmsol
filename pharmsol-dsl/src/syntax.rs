@@ -246,12 +246,41 @@ pub enum ExprKind {
     },
     Call {
         callee: Ident,
-        args: Vec<Expr>,
+        args: Vec<CallArg>,
     },
     Index {
         target: Box<Expr>,
         index: Box<Expr>,
     },
+}
+
+/// One argument of a call expression: positional (`f(1)`) or named
+/// (`f(x = 1)`). The parser keeps every positional argument before the first
+/// named one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CallArg {
+    pub name: Option<Ident>,
+    pub value: Expr,
+}
+
+impl CallArg {
+    pub fn positional(value: Expr) -> Self {
+        Self { name: None, value }
+    }
+
+    pub fn named(name: Ident, value: Expr) -> Self {
+        Self {
+            name: Some(name),
+            value,
+        }
+    }
+
+    pub fn span(&self) -> Span {
+        match &self.name {
+            Some(name) => name.span.join(self.value.span),
+            None => self.value.span,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -604,7 +633,15 @@ fn write_expr(expr: &Expr, out: &mut String) -> fmt::Result {
         }
         ExprKind::Call { callee, args } => {
             write!(out, "{}(", callee.text)?;
-            write_expr_list(args, out)?;
+            for (index, arg) in args.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                if let Some(name) = &arg.name {
+                    write!(out, "{} = ", name.text)?;
+                }
+                write_expr(&arg.value, out)?;
+            }
             out.push(')');
             Ok(())
         }

@@ -84,6 +84,39 @@ mod externs {
     }
 }
 
+/// Host function a math intrinsic lowers to, or `None` when it is emitted
+/// inline. Its arity is the intrinsic's parameter count.
+fn math_extern(function: MathFunction) -> Option<*const u8> {
+    Some(match function {
+        MathFunction::Abs => externs::abs_ as *const u8,
+        MathFunction::Ceil => externs::ceil_ as *const u8,
+        MathFunction::Exp => externs::exp_ as *const u8,
+        MathFunction::Floor => externs::floor_ as *const u8,
+        MathFunction::Ln | MathFunction::Log => externs::ln_ as *const u8,
+        MathFunction::Log10 => externs::log10_ as *const u8,
+        MathFunction::Log2 => externs::log2_ as *const u8,
+        MathFunction::Pow => externs::pow_ as *const u8,
+        MathFunction::Round => externs::round_ as *const u8,
+        MathFunction::Sin => externs::sin_ as *const u8,
+        MathFunction::Cos => externs::cos_ as *const u8,
+        MathFunction::Tan => externs::tan_ as *const u8,
+        MathFunction::Sqrt => externs::sqrt_ as *const u8,
+        MathFunction::Effect50 => externs::effect50_ as *const u8,
+        MathFunction::Max | MathFunction::Min => return None,
+    })
+}
+
+fn math_extern_symbol(function: MathFunction) -> String {
+    format!("pm_{}", function.name())
+}
+
+fn math_slot(function: MathFunction) -> usize {
+    MathFunction::ALL
+        .iter()
+        .position(|candidate| *candidate == function)
+        .expect("MathFunction::ALL lists every intrinsic")
+}
+
 /// Error reported while lowering an execution model into native in-process JIT
 /// code.
 ///
@@ -156,40 +189,17 @@ impl std::fmt::Debug for JitCompileError {
 
 impl std::error::Error for JitCompileError {}
 
+/// Imported host functions, indexed like `MathFunction::ALL`.
 #[derive(Clone, Copy)]
-struct ExternIds {
-    exp: cranelift_module::FuncId,
-    ln: cranelift_module::FuncId,
-    log10: cranelift_module::FuncId,
-    log2: cranelift_module::FuncId,
-    sqrt: cranelift_module::FuncId,
-    abs: cranelift_module::FuncId,
-    ceil: cranelift_module::FuncId,
-    floor: cranelift_module::FuncId,
-    round: cranelift_module::FuncId,
-    sin: cranelift_module::FuncId,
-    cos: cranelift_module::FuncId,
-    tan: cranelift_module::FuncId,
-    pow: cranelift_module::FuncId,
-    effect50: cranelift_module::FuncId,
-}
+struct ExternIds([Option<cranelift_module::FuncId>; MathFunction::ALL.len()]);
 
 #[derive(Clone, Copy)]
-struct ExternRefs {
-    exp: codegen::ir::FuncRef,
-    ln: codegen::ir::FuncRef,
-    log10: codegen::ir::FuncRef,
-    log2: codegen::ir::FuncRef,
-    sqrt: codegen::ir::FuncRef,
-    abs: codegen::ir::FuncRef,
-    ceil: codegen::ir::FuncRef,
-    floor: codegen::ir::FuncRef,
-    round: codegen::ir::FuncRef,
-    sin: codegen::ir::FuncRef,
-    cos: codegen::ir::FuncRef,
-    tan: codegen::ir::FuncRef,
-    pow: codegen::ir::FuncRef,
-    effect50: codegen::ir::FuncRef,
+struct ExternRefs([Option<codegen::ir::FuncRef>; MathFunction::ALL.len()]);
+
+impl ExternRefs {
+    fn get(&self, function: MathFunction) -> Option<codegen::ir::FuncRef> {
+        self.0[math_slot(function)]
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -248,20 +258,11 @@ pub fn compile_execution_artifact(
         .map_err(|error| JitCompileError::new(error.to_string(), Some(model.span)))?;
 
     let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
-    builder.symbol("pm_exp", externs::exp_ as *const u8);
-    builder.symbol("pm_ln", externs::ln_ as *const u8);
-    builder.symbol("pm_log10", externs::log10_ as *const u8);
-    builder.symbol("pm_log2", externs::log2_ as *const u8);
-    builder.symbol("pm_sqrt", externs::sqrt_ as *const u8);
-    builder.symbol("pm_abs", externs::abs_ as *const u8);
-    builder.symbol("pm_ceil", externs::ceil_ as *const u8);
-    builder.symbol("pm_floor", externs::floor_ as *const u8);
-    builder.symbol("pm_round", externs::round_ as *const u8);
-    builder.symbol("pm_sin", externs::sin_ as *const u8);
-    builder.symbol("pm_cos", externs::cos_ as *const u8);
-    builder.symbol("pm_tan", externs::tan_ as *const u8);
-    builder.symbol("pm_pow", externs::pow_ as *const u8);
-    builder.symbol("pm_effect50", externs::effect50_ as *const u8);
+    for function in MathFunction::ALL {
+        if let Some(pointer) = math_extern(function) {
+            builder.symbol(math_extern_symbol(function), pointer);
+        }
+    }
 
     let mut module = JITModule::new(builder);
     let ptr_ty = module.target_config().pointer_type();
@@ -374,22 +375,17 @@ fn declare_externs(module: &mut JITModule, span: Span) -> Result<ExternIds, JitC
                 .map_err(|error| JitCompileError::new(error.to_string(), Some(span)))
         };
 
-    Ok(ExternIds {
-        exp: declare(module, "pm_exp", 1)?,
-        ln: declare(module, "pm_ln", 1)?,
-        log10: declare(module, "pm_log10", 1)?,
-        log2: declare(module, "pm_log2", 1)?,
-        sqrt: declare(module, "pm_sqrt", 1)?,
-        abs: declare(module, "pm_abs", 1)?,
-        ceil: declare(module, "pm_ceil", 1)?,
-        floor: declare(module, "pm_floor", 1)?,
-        round: declare(module, "pm_round", 1)?,
-        sin: declare(module, "pm_sin", 1)?,
-        cos: declare(module, "pm_cos", 1)?,
-        tan: declare(module, "pm_tan", 1)?,
-        pow: declare(module, "pm_pow", 2)?,
-        effect50: declare(module, "pm_effect50", 5)?,
-    })
+    let mut ids = [None; MathFunction::ALL.len()];
+    for (slot, function) in ids.iter_mut().zip(MathFunction::ALL) {
+        if math_extern(function).is_some() {
+            *slot = Some(declare(
+                module,
+                &math_extern_symbol(function),
+                function.signature().params.len(),
+            )?);
+        }
+    }
+    Ok(ExternIds(ids))
 }
 
 fn compile_role_function(
@@ -475,22 +471,11 @@ fn emit_statement_function(
         builder.func.import_signature(signature)
     };
 
-    let externs = ExternRefs {
-        exp: module.declare_func_in_func(externs.exp, builder.func),
-        ln: module.declare_func_in_func(externs.ln, builder.func),
-        log10: module.declare_func_in_func(externs.log10, builder.func),
-        log2: module.declare_func_in_func(externs.log2, builder.func),
-        sqrt: module.declare_func_in_func(externs.sqrt, builder.func),
-        abs: module.declare_func_in_func(externs.abs, builder.func),
-        ceil: module.declare_func_in_func(externs.ceil, builder.func),
-        floor: module.declare_func_in_func(externs.floor, builder.func),
-        round: module.declare_func_in_func(externs.round, builder.func),
-        sin: module.declare_func_in_func(externs.sin, builder.func),
-        cos: module.declare_func_in_func(externs.cos, builder.func),
-        tan: module.declare_func_in_func(externs.tan, builder.func),
-        pow: module.declare_func_in_func(externs.pow, builder.func),
-        effect50: module.declare_func_in_func(externs.effect50, builder.func),
-    };
+    let externs = ExternRefs(
+        externs
+            .0
+            .map(|id| id.map(|id| module.declare_func_in_func(id, builder.func))),
+    );
 
     let mut locals = BTreeMap::new();
     for local in &program.locals {
@@ -1049,23 +1034,12 @@ fn lower_math_call(
             })
         }
         _ => {
-            let function = match intrinsic {
-                MathFunction::Abs => env.externs.abs,
-                MathFunction::Ceil => env.externs.ceil,
-                MathFunction::Exp => env.externs.exp,
-                MathFunction::Floor => env.externs.floor,
-                MathFunction::Ln | MathFunction::Log => env.externs.ln,
-                MathFunction::Log10 => env.externs.log10,
-                MathFunction::Log2 => env.externs.log2,
-                MathFunction::Pow => env.externs.pow,
-                MathFunction::Round => env.externs.round,
-                MathFunction::Sin => env.externs.sin,
-                MathFunction::Cos => env.externs.cos,
-                MathFunction::Tan => env.externs.tan,
-                MathFunction::Sqrt => env.externs.sqrt,
-                MathFunction::Effect50 => env.externs.effect50,
-                MathFunction::Max | MathFunction::Min => unreachable!(),
-            };
+            let function = env.externs.get(intrinsic).ok_or_else(|| {
+                JitCompileError::new(
+                    format!("`{}` has no host function", intrinsic.name()),
+                    Some(span),
+                )
+            })?;
 
             let mut call_args = Vec::with_capacity(args.len());
             for arg in args {
