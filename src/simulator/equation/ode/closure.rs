@@ -750,6 +750,9 @@ where
     integration_schedule: IntegrationSchedule,
     time_origin: Cell<f64>,
     explicit_step_guard: ExplicitStepGuard,
+    /// diffsol's lifetime Newton-failure count when the current event
+    /// interval began.
+    newton_failures_before_interval: Cell<usize>,
     rateiv_buffer: RefCell<V>,
     jvp_x_buffer: RefCell<V>,
     jvp_base_buffer: RefCell<V>,
@@ -799,6 +802,14 @@ where
 
     pub(crate) fn check_explicit_step_budget(&self) -> Option<PharmsolError> {
         self.explicit_step_guard.check_at_next_step()
+    }
+
+    pub(crate) fn set_newton_failures_before_interval(&self, failures: usize) {
+        self.newton_failures_before_interval.set(failures);
+    }
+
+    pub(crate) fn newton_failures_before_interval(&self) -> usize {
+        self.newton_failures_before_interval.get()
     }
 
     pub(crate) fn set_left_continuity_time(&self, time: Option<f64>) {
@@ -890,6 +901,7 @@ where
             integration_schedule,
             time_origin: Cell::new(time_origin),
             explicit_step_guard: ExplicitStepGuard::default(),
+            newton_failures_before_interval: Cell::new(0),
             rateiv_buffer,
             jvp_x_buffer,
             jvp_base_buffer,

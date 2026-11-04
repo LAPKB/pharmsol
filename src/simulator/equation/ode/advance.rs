@@ -8,6 +8,55 @@
 use super::closure::PMProblem;
 use super::*;
 use crate::simulator::equation::model::Step;
+use diffsol::{BdfConfig, ExplicitRkConfig, SdirkConfig};
+
+/// Solver configurations whose Newton-failure limit the driver can move.
+///
+/// diffsol keeps the limit on each family's concrete configuration rather
+/// than on [`OdeSolverConfig`], so this exposes it to the generic driver.
+pub(crate) trait NewtonFailureLimit {
+    /// Allow failures until the solver's lifetime count exceeds `limit`.
+    fn set_newton_failure_limit(&mut self, limit: usize);
+}
+
+impl NewtonFailureLimit for BdfConfig<f64> {
+    fn set_newton_failure_limit(&mut self, limit: usize) {
+        self.maximum_newton_fails = limit;
+    }
+}
+
+impl NewtonFailureLimit for SdirkConfig<f64> {
+    fn set_newton_failure_limit(&mut self, limit: usize) {
+        self.maximum_newton_fails = limit;
+    }
+}
+
+/// Explicit methods solve no nonlinear system, so there is nothing to limit.
+impl NewtonFailureLimit for ExplicitRkConfig<f64> {
+    fn set_newton_failure_limit(&mut self, _limit: usize) {}
+}
+
+/// Give the solver a fresh Newton-failure budget for the interval it is about
+/// to integrate.
+///
+/// diffsol's failure count never resets, so the limit is moved to the current
+/// count plus [`MAX_NEWTON_FAILURES_PER_INTERVAL`], and the count is recorded
+/// so failures can be reported per interval.
+fn begin_newton_failure_interval<'a, F, S>(solver: &mut S)
+where
+    F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
+    S: OdeSolverMethod<'a, PMProblem<'a, F>>,
+    S::Config: NewtonFailureLimit,
+{
+    let failures = solver.get_statistics().number_of_nonlinear_solver_fails;
+    solver
+        .problem()
+        .eqn
+        .set_newton_failures_before_interval(failures);
+    solver
+        .config_mut()
+        .set_newton_failure_limit(failures.saturating_add(MAX_NEWTON_FAILURES_PER_INTERVAL));
+}
 
 fn checked_local_time(
     time_origin: f64,
@@ -473,10 +522,15 @@ where
                     stop_time: solver.problem().eqn.absolute_time(stop_time),
                     state_time: solver.problem().eqn.absolute_time(state_time),
                 },
-                OdeSolverError::TooManyNonlinearSolverFailures { time, num_failures } => {
+                // diffsol reports a lifetime count (BDF) or its limit (SDIRK);
+                // both are rebased per interval, so report this interval's.
+                OdeSolverError::TooManyNonlinearSolverFailures { time, .. } => {
                     OdeSolverError::TooManyNonlinearSolverFailures {
                         time: solver.problem().eqn.absolute_time(time),
-                        num_failures,
+                        num_failures: solver
+                            .get_statistics()
+                            .number_of_nonlinear_solver_fails
+                            .saturating_sub(solver.problem().eqn.newton_failures_before_interval()),
                     }
                 }
                 OdeSolverError::TooManyErrorTestFailures { time, num_failures } => {
@@ -633,6 +687,9 @@ where
 /// for true RHS discontinuities, and safe normalization of stops that diffsol
 /// has already reached.
 ///
+/// Each call integrates one event-to-event interval and gets its own
+/// Newton-failure budget (see [`begin_newton_failure_interval`]).
+///
 /// `after_step` runs after every step; the driver uses it to surface
 /// model-function errors raised inside the RHS callback.
 #[allow(clippy::too_many_arguments)]
@@ -649,6 +706,7 @@ pub(crate) fn advance_solver_to_event<'a, F, S, H>(
 where
     F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
     S: OdeSolverMethod<'a, PMProblem<'a, F>>,
+    S::Config: NewtonFailureLimit,
     H: FnMut() -> Result<(), PharmsolError>,
 {
     let initial_state_time = solver.state().t;
@@ -677,6 +735,7 @@ where
             "ODE event advance gap from t = {initial_current_time:.16e} to t = {next_event_time:.16e} is not representable"
         )));
     }
+    begin_newton_failure_interval(solver);
 
     loop {
         let state_time = solver.state().t;

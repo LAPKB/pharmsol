@@ -8,7 +8,9 @@ mod advance;
 mod closure;
 mod native;
 
-pub(crate) use advance::{advance_solver_to_event, validate_resolved_ode_schedule};
+pub(crate) use advance::{
+    advance_solver_to_event, validate_resolved_ode_schedule, NewtonFailureLimit,
+};
 pub use native::{NativeOde, NativeOdeWorkspace};
 
 use std::cell::{Cell, RefCell};
@@ -50,6 +52,14 @@ const MIN_TSIT45_PROGRESS_FRACTION_PER_WINDOW: f64 = 1e-4;
 /// `PMProblem` (one subject occasion). Calibrated against long Pmetrics/PMcore
 /// runs; hitting it indicates a stalled trajectory, not normal work.
 pub(crate) const DEFAULT_TSIT45_MAX_ACCEPTED_STEPS_PER_SESSION: usize = 10_000_000;
+/// Newton (nonlinear solver) failures an implicit solver may recover from
+/// within one event-to-event interval before giving up.
+///
+/// diffsol counts these failures over the solver's whole lifetime, and one
+/// solver integrates an entire occasion, so its own limit (also 50) would
+/// eventually abort a long dosing history even when no single interval was in
+/// trouble. The driver rebases the limit at every event instead.
+pub(crate) const MAX_NEWTON_FAILURES_PER_INTERVAL: usize = 50;
 
 /// Accepted-step limits configured once for one `PMProblem`/occasion.
 ///
@@ -363,6 +373,7 @@ impl<M: OdeModel> ODE<M> {
     where
         F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
         S: OdeSolverMethod<'a, PMProblem<'a, F>>,
+        S::Config: NewtonFailureLimit,
     {
         let mut integration_boundary_cursor = 0usize;
         // Set when the previous event changed the state or the previous stop
