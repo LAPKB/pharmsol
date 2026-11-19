@@ -778,9 +778,11 @@ impl<'a> AuthoringParser<'a> {
     ) -> Result<(), ParseError> {
         let input_argument = match &expr.kind {
             ExprKind::Call { callee, args }
-                if matches!(callee.text.as_str(), "bolus" | "infusion") && args.len() == 1 =>
+                if matches!(callee.text.as_str(), "bolus" | "infusion")
+                    && args.len() == 1
+                    && args[0].name.is_none() =>
             {
-                Some(&args[0])
+                Some(&args[0].value)
             }
             ExprKind::Index { target, index } if matches!(&target.kind, ExprKind::Name(name) if matches!(name.text.as_str(), "bolus" | "infusion")) => {
                 Some(index.as_ref())
@@ -840,10 +842,10 @@ impl<'a> AuthoringParser<'a> {
                 self.infer_ode_route(input.clone(), kind, destination, expr.span)?;
                 expr.kind = ExprKind::Call {
                     callee: Ident::new(RATE_FUNCTION_NAME, expr.span),
-                    args: vec![Expr {
+                    args: vec![CallArg::positional(Expr {
                         span: input.span,
                         kind: ExprKind::Name(input),
-                    }],
+                    })],
                 };
                 return Ok(());
             }
@@ -900,7 +902,7 @@ impl<'a> AuthoringParser<'a> {
                             ));
                         }
                         for arg in args {
-                            self.lower_ode_input_expr(arg, destination, conditional)?;
+                            self.lower_ode_input_expr(&mut arg.value, destination, conditional)?;
                         }
                     }
                     ExprKind::Index { target, index } => {
@@ -1442,10 +1444,10 @@ fn rename_input_aliases_in_expr(expr: &mut Expr, aliases: &[(&str, &str)], src: 
         }
         ExprKind::Call { callee, args } => {
             if rename(callee) && args.len() == 1 {
-                label_from_number(&mut args[0]);
+                label_from_number(&mut args[0].value);
             }
             for arg in args {
-                rename_input_aliases_in_expr(arg, aliases, src);
+                rename_input_aliases_in_expr(&mut arg.value, aliases, src);
             }
         }
         ExprKind::Unary { expr, .. } => rename_input_aliases_in_expr(expr, aliases, src),
@@ -1471,14 +1473,16 @@ fn first_state_reference<'e>(expr: &'e Expr, states: &[StateDecl]) -> Option<&'e
         }
         ExprKind::Call { args, .. } => args
             .iter()
-            .find_map(|arg| first_state_reference(arg, states)),
+            .find_map(|arg| first_state_reference(&arg.value, states)),
         ExprKind::Number(_) | ExprKind::Bool(_) | ExprKind::Name(_) => None,
     }
 }
 
 fn ode_input(expr: &Expr) -> Option<(SurfaceRouteKind, Ident)> {
     let (name, argument) = match &expr.kind {
-        ExprKind::Call { callee, args } if args.len() == 1 => (&callee.text, &args[0]),
+        ExprKind::Call { callee, args } if args.len() == 1 && args[0].name.is_none() => {
+            (&callee.text, &args[0].value)
+        }
         ExprKind::Index { target, index } => {
             let ExprKind::Name(name) = &target.kind else {
                 return None;
@@ -1505,7 +1509,7 @@ fn contains_bolus(expr: &Expr) -> bool {
     match &expr.kind {
         ExprKind::Unary { expr, .. } => contains_bolus(expr),
         ExprKind::Binary { lhs, rhs, .. } => contains_bolus(lhs) || contains_bolus(rhs),
-        ExprKind::Call { args, .. } => args.iter().any(contains_bolus),
+        ExprKind::Call { args, .. } => args.iter().any(|arg| contains_bolus(&arg.value)),
         ExprKind::Index { target, index } => contains_bolus(target) || contains_bolus(index),
         _ => false,
     }
@@ -1956,7 +1960,10 @@ fn shift_expr(expr: &mut Expr, delta: usize) {
         ExprKind::Call { callee, args } => {
             callee.span = callee.span.shifted(delta);
             for arg in args {
-                shift_expr(arg, delta);
+                if let Some(name) = &mut arg.name {
+                    name.span = name.span.shifted(delta);
+                }
+                shift_expr(&mut arg.value, delta);
             }
         }
         ExprKind::Index { target, index } => {

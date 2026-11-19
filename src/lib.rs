@@ -137,6 +137,7 @@ pub use crate::simulator::likelihood::{ObservationModel, ParticlePredictions};
 pub use error::PharmsolError;
 pub use nalgebra::dmatrix;
 pub use parameters::{ParameterError, ParameterOrder, Parameters};
+pub use pharmsol_dsl::effect50;
 #[doc(hidden)]
 pub use pharmsol_macros::{analytical as __analytical_impl, ode as __ode_impl, sde as __sde_impl};
 pub use std::collections::HashMap;
