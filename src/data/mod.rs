@@ -85,6 +85,7 @@ pub mod error_poly;
 pub mod event;
 pub mod observation_error;
 pub mod parser;
+pub(crate) mod stable_hash;
 pub mod structs;
 pub use crate::nca::{MetricsError, ObservationMetrics};
 pub use covariate::*;
