@@ -10,7 +10,7 @@
 //! `"cp"`. Numeric values are accepted, but they remain labels until a
 //! downstream workflow explicitly interprets them as indices.
 
-use crate::data::error_model::ErrorPoly;
+use crate::data::error_poly::ErrorPoly;
 use crate::prelude::simulator::Prediction;
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;

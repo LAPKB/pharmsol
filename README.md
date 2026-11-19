@@ -92,6 +92,18 @@ See [examples/analytical_readme.rs](examples/analytical_readme.rs),
 [examples/analytical_vs_ode.rs](examples/analytical_vs_ode.rs), and
 [examples/compare_solvers.rs](examples/compare_solvers.rs).
 
+### Predictions, Not Likelihoods
+
+pharmsol simulates models and returns predictions; it does not ship error
+models or compute likelihoods. Those live in downstream crates such as
+[PMcore](https://github.com/LAPKB/PMcore). `map_predictions` is the parallel
+building block they use: it simulates every subject at every support point and
+hands each result to a closure.
+
+The one exception is the SDE particle filter, which has to weight particles
+while it simulates. `SDE::log_likelihood` and `SDE::filter` take an
+`ObservationModel`, a trait pharmsol defines but does not implement.
+
 ### Built-In Analytical Kernels
 
 - [x] One-compartment with IV infusion

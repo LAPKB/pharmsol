@@ -1048,7 +1048,7 @@ mod tests {
     use crate::dsl::model_info::{RuntimeCovariateInfo, RuntimeOutputInfo};
     use crate::simulator::equation::model::resolve_input;
     use crate::simulator::equation::Cache;
-    use crate::simulator::likelihood::log_likelihood_matrix;
+    use crate::simulator::predictions::map_predictions;
     use crate::InputLabel;
     use crate::PharmsolError;
     use crate::{
@@ -1057,7 +1057,7 @@ mod tests {
         prelude::SubjectPredictions,
         Parameters, Subject,
     };
-    use crate::{Data, Equation, OutputModels};
+    use crate::{Data, Equation};
     use ndarray::array;
     use pharmsol_dsl::execution::ModelFunctionKind;
     use pharmsol_dsl::{
@@ -1570,15 +1570,17 @@ mod tests {
             .expect("predictions should come from the cache");
         assert_eq!(predictions.flat_predictions(), expected.flat_predictions());
 
-        let matrix = log_likelihood_matrix(
+        let matrix = map_predictions(
             &model,
             &Data::new(vec![subject]),
             &array![[0.2, 20.0]],
-            &OutputModels::new(),
-            false,
+            |_, result| result.expect("matrix should be served from the cache"),
         )
-        .expect("matrix should be served from the cache");
-        assert_eq!(matrix[[0, 0]], 0.0);
+        .expect("matrix shape is valid");
+        assert_eq!(
+            matrix[[0, 0]].flat_predictions(),
+            expected.flat_predictions()
+        );
     }
 
     #[test]

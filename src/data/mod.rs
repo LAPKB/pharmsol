@@ -24,14 +24,14 @@
 //! - [`Event`], [`Bolus`], [`Infusion`], and [`Observation`] for explicit
 //!   event-level control.
 //! - [`Covariate`] and [`Covariates`] for time-varying subject characteristics.
-//! - [`OutputModels`] (one [`OutputModel`] per output) for how observations
-//!   are distributed around predictions, and [`ObservationError`] for invalid
-//!   observation data.
+//! - [`ErrorPoly`] for an observation's own assay error polynomial, carried
+//!   as data from the input to the predictions.
+//! - [`ObservationError`] for invalid observation data.
 //!
 //! # Choose A Data Input Path
 //!
 //! - Use `Subject::builder` when you are authoring a schedule directly in Rust.
-//! - Use [`row::DataRow`] and [`row::DataRowBuilder`] for the existing
+//! - Use [`parser::DataRow`] and [`parser::DataRowBuilder`] for the existing
 //!   Pmetrics-shaped row ingestion API.
 //! - Use [`parser::read_pmetrics`] when you are loading a Pmetrics-style file
 //!   from disk.
@@ -53,17 +53,13 @@
 //! [`Occasion`] indices are different: they are integer period markers used to
 //! separate repeated dosing blocks within one subject.
 //!
-//! # Error Surfaces
+//! # Observation Errors
 //!
-//! This module exposes two related but different error families:
-//!
-//! - [`OutputModels`] for the likelihood of observations. Each output's
-//!   [`OutputModel`] takes sigma from the observation ([`AssayErrorModel`],
-//!   commonly used in non-parametric workflows) or from the prediction
-//!   ([`ResidualErrorModel`], commonly used in parametric workflows), and
-//!   picks a distribution and a transform.
-//! - [`ObservationError`] for invalid or insufficient observation data during
-//!   profile construction and related preprocessing.
+//! pharmsol does not score observations against predictions; error models
+//! and likelihoods live in downstream crates. An observation may still carry
+//! its own [`ErrorPoly`], which is passed through to its prediction
+//! unchanged. [`ObservationError`] reports invalid or insufficient
+//! observation data during profile construction and related preprocessing.
 //!
 //! # Example
 //!
@@ -85,18 +81,14 @@
 pub mod auc;
 pub mod builder;
 pub mod covariate;
-pub mod error_model;
+pub mod error_poly;
 pub mod event;
 pub mod observation_error;
-pub mod output_model;
 pub mod parser;
-pub mod residual_error;
 pub mod structs;
 pub use crate::nca::{MetricsError, ObservationMetrics};
 pub use covariate::*;
-pub use error_model::*;
+pub use error_poly::ErrorPoly;
 pub use event::*;
 pub use observation_error::ObservationError;
-pub use output_model::{Family, OutputModel, OutputModels, Scale, Transform};
-pub use residual_error::*;
 pub use structs::{Data, Occasion, Subject};

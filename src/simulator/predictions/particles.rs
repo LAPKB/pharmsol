@@ -9,9 +9,9 @@ use std::borrow::Cow;
 use ndarray::Array2;
 
 use crate::data::event::Observation;
-use crate::{PharmsolError, PointPredictions};
+use crate::PharmsolError;
 
-use super::{Prediction, SubjectPredictions};
+use super::{PointPredictions, Prediction, SubjectPredictions};
 
 /// Particle predictions for one subject.
 ///
@@ -24,8 +24,8 @@ use super::{Prediction, SubjectPredictions};
 /// - **Free-running** ([`SDE::predict`](crate::Equation::predict)): each row is
 ///   one particle's own path through every observation, and every particle
 ///   counts equally.
-/// - **Filtered** ([`SDE::simulate`](crate::Equation::simulate) with an
-///   observation model): at each observation the particles were weighted by
+/// - **Filtered** ([`SDE::filter`](crate::SDE::filter) with an
+///   [`ObservationModel`](crate::ObservationModel)): at each observation the particles were weighted by
 ///   the observation and then resampled. Column `j` holds the particles just
 ///   before that resampling, with their normalized weights in
 ///   [`Self::weights`]. Resampling reorders particles, so a row is not one

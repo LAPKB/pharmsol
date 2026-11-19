@@ -3,7 +3,7 @@
 //! You can use it to:
 //!
 //! - build PK/PD datasets from dose and observation events
-//! - simulate analytical, ODE, and SDE models
+//! - simulate analytical, ODE, and SDE models and collect their predictions
 //! - run non-compartmental analysis (NCA)
 //! - compile and run models from the pharmsol DSL when the DSL features are enabled
 //!
@@ -14,6 +14,14 @@
 //! - [`simulator`] to define models and generate predictions
 //! - [`nca`] to calculate NCA metrics from the same data structures
 //! - [`optimize`] for optimizer-oriented workflows
+//!
+//! pharmsol does not compute likelihoods or ship error models; those live in
+//! downstream crates such as PMcore. [`map_predictions`] is the parallel
+//! building block they use: it simulates every subject at every support
+//! point and hands each result to a closure. The one exception is the
+//! [`SDE`] particle filter, which must weight particles while it simulates:
+//! it takes an [`ObservationModel`], a trait pharmsol defines but does not
+//! implement.
 //!
 //! The DSL runtime surface is feature-gated. When you enable `dsl`, the
 //! `pharmsol::dsl` module adds parsing, analysis, compilation, and runtime
@@ -67,6 +75,7 @@
 //! | --- | --- | --- |
 //! | Build subject data | [`data`] or [`prelude`] | Best when you already know dose times, labels, and observations. |
 //! | Simulate a model written in Rust | [`simulator`] or [`prelude`] | Supports analytical, ODE, and SDE models. |
+//! | Predict a population over support points | [`map_predictions`] | Parallel; the closure scores each cell. |
 //! | Run NCA | [`nca`] or [`prelude`] | Reuses the same `Subject`, `Occasion`, and `Data` types. |
 //! | Use optimization helpers | [`optimize`] | Intended for advanced workflows. |
 //! | Parse or compile DSL source | `pharmsol::dsl` | Requires the `dsl` feature. |
@@ -123,17 +132,16 @@ pub use crate::data::builder::SubjectBuilderExt;
 pub use crate::data::Interpolation::*;
 pub use crate::data::*;
 pub use crate::optimize::effect::{estimate_effect_2, estimate_effect_3};
-pub use crate::optimize::parameters::ParameterOptimizer;
 pub use crate::simulator::equation::analytical::*;
 pub use crate::simulator::equation::metadata;
 pub use crate::simulator::equation::{
     self,
     ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
-    Analytical, AnalyticalKernel, Cache, Equation, ModelKind, ModelMetadata, ModelMetadataError,
-    NameDomain, PointPredictions, RouteInputPolicy, RouteKind, Simulation, ValidatedModelMetadata,
-    ODE, SDE,
+    Analytical, AnalyticalKernel, Cache, Equation, FilteredParticles, ModelKind, ModelMetadata,
+    ModelMetadataError, NameDomain, ObservationModel, PointPredictions, RouteInputPolicy,
+    RouteKind, ValidatedModelMetadata, ODE, SDE,
 };
-pub use crate::simulator::likelihood::{ObservationModel, ParticlePredictions};
+pub use crate::simulator::predictions::{map_predictions, ParticlePredictions};
 pub use error::PharmsolError;
 pub use nalgebra::dmatrix;
 pub use parameters::{ParameterError, ParameterOrder, Parameters};
@@ -328,24 +336,19 @@ pub mod prelude {
     // Re-export error type
     pub use crate::error::PharmsolError;
 
-    // Data submodule for organized access and backward compatibility
+    // Data submodule for organized access
     pub mod data {
         pub use crate::data::{
-            error_model::AssayErrorModel,
-            output_model::{Family, OutputModel, OutputModels, Scale, Transform},
             parser::{read_pmetrics, DataError, DataRow, DataRowBuilder},
-            residual_error::ResidualErrorModel,
-            Covariates, Data, Event, Occasion, Subject,
+            Covariates, Data, ErrorPoly, Event, Occasion, Subject,
         };
     }
 
     // Direct data re-exports for convenience
     pub use crate::data::{
         builder::SubjectBuilderExt,
-        error_model::{AssayErrorModel, ErrorPoly},
-        event::{AUCMethod, BLQRule, OutputLabel, Route},
-        output_model::{Family, OutputModel, OutputModels, Scale, Transform},
-        residual_error::ResidualErrorModel,
+        error_poly::ErrorPoly,
+        event::{AUCMethod, BLQRule, Censor, OutputLabel, Route},
         Covariates, Data, Event, Interpolation, Occasion, Subject,
     };
 
@@ -357,17 +360,15 @@ pub mod prelude {
     // AUC primitives for direct use on raw arrays
     pub use crate::data::auc::{auc, auc_interval, aumc, interpolate_linear};
 
-    #[allow(deprecated)]
     // Simulator submodule for organized access to simulation types.
     pub mod simulator {
         pub use crate::simulator::{
             cache::{self, PredictionCache, SdeLikelihoodCache, DEFAULT_CACHE_SIZE},
             equation,
-            equation::Equation,
-            likelihood::{
-                log_likelihood_batch, log_likelihood_matrix, log_likelihood_subject, log_psi, psi,
-                ObservationModel, ParticlePredictions, PopulationPredictions, Prediction,
-                SubjectPredictions,
+            equation::{Equation, FilteredParticles, ObservationModel},
+            predictions::{
+                map_predictions, ParticlePredictions, PointPredictions, PopulationPredictions,
+                Prediction, SubjectPredictions,
             },
         };
     }
@@ -378,9 +379,9 @@ pub mod prelude {
         equation::{
             self,
             ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
-            Equation, PointPredictions, Simulation,
+            Equation, FilteredParticles, ObservationModel, PointPredictions,
         },
-        likelihood::{ObservationModel, ParticlePredictions, Prediction, SubjectPredictions},
+        predictions::{ParticlePredictions, Prediction, SubjectPredictions},
     };
 
     // Analytical model functions

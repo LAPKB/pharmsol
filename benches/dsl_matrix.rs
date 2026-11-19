@@ -4,25 +4,23 @@
 //!
 //! IDs:
 //! - `dsl/compile`           → `{workload}/{kind}`
-//! - `dsl/log-likelihood`    → `{workload}/{kind}` (cache disabled)
-//! - `dsl/likelihood-matrix` → `{workload}/ode` (cache cleared before each iteration)
+//! - `dsl/predict`           → `{workload}/{kind}` (cache disabled)
+//! - `dsl/prediction-matrix` → `{workload}/ode` (cache cleared before each iteration)
 
 use std::hint::black_box;
 use std::time::Duration;
 
-use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use pharmsol::dsl::{
     compile_module_source_to_runtime, CompiledRuntimeModel, RuntimeAnalyticalModel, RuntimeOdeModel,
 };
-use pharmsol::prelude::simulator::log_likelihood_matrix;
-use pharmsol::prelude::*;
-use pharmsol::{Cache, Equation, Parameters};
+use pharmsol::{Cache, Parameters};
 
 mod common;
 use common::{
-    assay_error_models, dsl_model_name, dsl_source, matrix_data, named_params,
-    subject_for_likelihood, support_points, SolverKind, Workload,
+    bench_matrix, bench_predict, dsl_model_name, dsl_source, matrix_data, named_params,
+    single_subject, support_points, SolverKind, Workload,
 };
 
 const MATRIX_N_SUBJECTS: usize = 32;
@@ -62,51 +60,6 @@ fn compile_analytical(workload: Workload) -> RuntimeAnalyticalModel {
     }
 }
 
-fn bench_log_likelihood<E: Equation>(
-    b: &mut criterion::Bencher,
-    model: &E,
-    subject: &Subject,
-    theta: &Parameters,
-    error_models: &OutputModels,
-) {
-    b.iter(|| {
-        black_box(
-            model
-                .log_likelihood(
-                    black_box(subject),
-                    black_box(theta),
-                    black_box(error_models),
-                )
-                .unwrap(),
-        )
-    });
-}
-
-fn bench_matrix<E: Equation + Cache>(
-    b: &mut criterion::Bencher,
-    model: &E,
-    data: &Data,
-    theta: &ndarray::Array2<f64>,
-    error_models: &OutputModels,
-) {
-    b.iter_batched(
-        || model.clear_cache(),
-        |()| {
-            black_box(
-                log_likelihood_matrix(
-                    black_box(model),
-                    black_box(data),
-                    black_box(theta),
-                    black_box(error_models),
-                    false,
-                )
-                .unwrap(),
-            )
-        },
-        BatchSize::PerIteration,
-    );
-}
-
 // ───────────────────────────── compile group ─────────────────────────
 
 fn compile_group(c: &mut Criterion) {
@@ -127,7 +80,7 @@ fn compile_group(c: &mut Criterion) {
         for kind in SolverKind::all() {
             group.bench_function(id(workload, kind), |b| {
                 b.iter_custom(|iters| {
-                    let actual = iters.min(MAX_ITERS_PER_BATCH).max(1);
+                    let actual = iters.clamp(1, MAX_ITERS_PER_BATCH);
                     let start = Instant::now();
                     for _ in 0..actual {
                         black_box(compile_runtime(black_box(workload), black_box(kind)));
@@ -142,28 +95,27 @@ fn compile_group(c: &mut Criterion) {
     group.finish();
 }
 
-// ───────────────────────────── log-likelihood group ──────────────────
+// ───────────────────────────── predict group ────────────────────────
 
-fn log_likelihood_group(c: &mut Criterion) {
-    let mut group = c.benchmark_group("dsl/log-likelihood");
-    let error_models = assay_error_models();
+fn predict_group(c: &mut Criterion) {
+    let mut group = c.benchmark_group("dsl/predict");
 
     for workload in Workload::all() {
-        let subject = subject_for_likelihood(workload);
+        let subject = single_subject(workload);
         for kind in SolverKind::all() {
             match kind {
                 SolverKind::Ode => {
                     let model = compile_ode(workload).disable_cache();
                     let theta = Parameters::with_model(&model, named_params(workload)).unwrap();
                     group.bench_function(id(workload, kind), |b| {
-                        bench_log_likelihood(b, &model, &subject, &theta, &error_models)
+                        bench_predict(b, &model, &subject, &theta)
                     });
                 }
                 SolverKind::Analytical => {
                     let model = compile_analytical(workload).disable_cache();
                     let theta = Parameters::with_model(&model, named_params(workload)).unwrap();
                     group.bench_function(id(workload, kind), |b| {
-                        bench_log_likelihood(b, &model, &subject, &theta, &error_models)
+                        bench_predict(b, &model, &subject, &theta)
                     });
                 }
             }
@@ -173,22 +125,20 @@ fn log_likelihood_group(c: &mut Criterion) {
     group.finish();
 }
 
-// ───────────────────────────── likelihood-matrix group ───────────────
+// ───────────────────────────── prediction-matrix group ───────────────
 
-/// ODE only, for the same reason as `native/likelihood-matrix`.
-fn likelihood_matrix_group(c: &mut Criterion) {
-    let mut group = c.benchmark_group("dsl/likelihood-matrix");
+/// ODE only, for the same reason as `native/prediction-matrix`.
+fn prediction_matrix_group(c: &mut Criterion) {
+    let mut group = c.benchmark_group("dsl/prediction-matrix");
     group.sample_size(20);
     group.measurement_time(Duration::from_secs(10));
-
-    let error_models = assay_error_models();
 
     for workload in Workload::all() {
         let data = matrix_data(workload, MATRIX_N_SUBJECTS);
         let theta = support_points(workload, MATRIX_N_SUPPORT);
         let model = compile_ode(workload);
         group.bench_function(id(workload, SolverKind::Ode), |b| {
-            bench_matrix(b, &model, &data, &theta, &error_models)
+            bench_matrix(b, &model, &data, &theta)
         });
     }
 
@@ -198,7 +148,7 @@ fn likelihood_matrix_group(c: &mut Criterion) {
 criterion_group!(
     dsl_matrix,
     compile_group,
-    log_likelihood_group,
-    likelihood_matrix_group
+    predict_group,
+    prediction_matrix_group
 );
 criterion_main!(dsl_matrix);

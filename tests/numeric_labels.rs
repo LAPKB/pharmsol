@@ -1,16 +1,12 @@
 //! Numeric route and output labels are plain names.
 //!
-//! A model that declares output `1` is matched by data `OUTEQ=1`, by
-//! `OutputModels::new().add("1", ...)` and by
-//! `OutputModels::new().add("1", ...)`, all by exact string match.
-//! Numeric labels have no relationship to declaration order and are never
-//! aliased to `input_<n>` / `outeq_<n>` or resolved by position.
+//! A model that declares output `1` is matched by data `OUTEQ=1` by exact
+//! string match. Numeric labels have no relationship to declaration order and
+//! are never aliased to `input_<n>` / `outeq_<n>` or resolved by position.
 
 use approx::assert_relative_eq;
-use ndarray::Array2;
-use pharmsol::prelude::simulator::log_likelihood_batch;
 use pharmsol::prelude::*;
-use pharmsol::{OutputModels, PharmsolError, PointPredictions, ResidualErrorModel};
+use pharmsol::{PharmsolError, PointPredictions};
 
 const PMETRICS_HEADER: &str = "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3";
 
@@ -60,14 +56,6 @@ fn named_one_cpt() -> equation::ODE {
     }
 }
 
-fn assay_error_models(label: &str) -> OutputModels {
-    OutputModels::new().with(label, OutputModel::assay([0.1, 0.1]))
-}
-
-fn residual_error_models(label: &str) -> OutputModels {
-    OutputModels::new().with(label, ResidualErrorModel::combined(0.2, 0.1))
-}
-
 fn one_cpt_parameters(model: &equation::ODE) -> Parameters {
     Parameters::with_model(model, [("ke", 0.2), ("v", 10.0)]).expect("valid parameters")
 }
@@ -81,7 +69,7 @@ fn prediction_values(predictions: &impl PointPredictions) -> Vec<f64> {
 }
 
 #[test]
-fn numeric_output_binds_error_models_from_pmetrics_data_like_a_named_output() {
+fn numeric_output_from_pmetrics_data_predicts_like_a_named_output() {
     let numeric = numeric_one_cpt();
     let named = named_one_cpt();
     // `1.0` is how many tools export the numeric Pmetrics column; it is
@@ -89,74 +77,19 @@ fn numeric_output_binds_error_models_from_pmetrics_data_like_a_named_output() {
     let numeric_data = pmetrics_data("1", "1.0");
     let named_data = pmetrics_data("iv", "cp");
 
-    let numeric_subject = &numeric_data.subjects()[0];
-    let named_subject = &named_data.subjects()[0];
+    let numeric_predictions = numeric
+        .predict(numeric_data.subjects()[0], &one_cpt_parameters(&numeric))
+        .expect("OUTEQ=1 resolves to output `1`");
+    let named_predictions = named
+        .predict(named_data.subjects()[0], &one_cpt_parameters(&named))
+        .expect("OUTEQ=cp resolves to output `cp`");
 
-    let numeric_ll = numeric
-        .log_likelihood(
-            numeric_subject,
-            &one_cpt_parameters(&numeric),
-            &assay_error_models("1"),
-        )
-        .expect("assay error model for output `1` binds");
-    let named_ll = named
-        .log_likelihood(
-            named_subject,
-            &one_cpt_parameters(&named),
-            &assay_error_models("cp"),
-        )
-        .expect("assay error model for output `cp` binds");
-    assert!(numeric_ll.is_finite());
-    assert_relative_eq!(numeric_ll, named_ll, max_relative = 1e-12);
-
-    let parameters = Array2::from_shape_vec((1, 2), vec![0.2, 10.0]).unwrap();
-    let numeric_residual = log_likelihood_batch(
-        &numeric,
-        &numeric_data,
-        &parameters,
-        &residual_error_models("1"),
-    )
-    .expect("residual error model for output `1` binds");
-    let named_residual = log_likelihood_batch(
-        &named,
-        &named_data,
-        &parameters,
-        &residual_error_models("cp"),
-    )
-    .expect("residual error model for output `cp` binds");
-    assert!(numeric_residual[0].is_finite());
-    assert_relative_eq!(numeric_residual[0], named_residual[0], max_relative = 1e-12);
-}
-
-#[test]
-fn error_models_for_undeclared_labels_fail_to_bind() {
-    let model = numeric_one_cpt();
-    let data = pmetrics_data("1", "1");
-    let subject = data.subjects()[0];
-    let parameters = one_cpt_parameters(&model);
-
-    // `0` is not a position, and `outeq_1` / `01` are not aliases of `1`.
-    for label in ["0", "2", "01", "outeq_1", "cp"] {
-        let error = model
-            .log_likelihood(subject, &parameters, &assay_error_models(label))
-            .expect_err("undeclared assay error-model label must not bind");
-        assert!(
-            matches!(
-                &error,
-                PharmsolError::ErrorModelError(
-                    pharmsol::data::error_model::ErrorModelError::UnknownOutputLabel(found)
-                ) if found == label
-            ),
-            "unexpected error for `{label}`: {error:?}"
-        );
-
-        let parameters = Array2::from_shape_vec((1, 2), vec![0.2, 10.0]).unwrap();
-        assert!(
-            log_likelihood_batch(&model, &data, &parameters, &residual_error_models(label))
-                .is_err(),
-            "undeclared residual error-model label `{label}` must not bind"
-        );
+    for prediction in numeric_predictions.predictions() {
+        assert_eq!(prediction.outeq().as_str(), "1");
     }
+    let numeric_values = prediction_values(&numeric_predictions);
+    assert!(numeric_values.iter().all(|value| *value > 0.0));
+    assert_eq!(numeric_values, prediction_values(&named_predictions));
 }
 
 #[test]
@@ -213,11 +146,6 @@ fn non_contiguous_numeric_output_is_a_single_named_slot() {
             "unexpected error for OUTEQ={outeq}: {error:?}"
         );
     }
-
-    let error_models = assay_error_models("2");
-    model
-        .log_likelihood(&pmetrics_subject("iv", "2"), &parameters, &error_models)
-        .expect("assay error model for output `2` binds to the only slot");
 }
 
 /// Numeric (`1`, `10`, `2`) and named labels produce identical simulations.
@@ -449,16 +377,12 @@ fn prefixed_looking_names_are_ordinary_labels() {
     };
     let parameters = Parameters::with_model(&model, [("ke", 0.2), ("v", 10.0)]).unwrap();
 
-    model
+    let predictions = model
         .predict(&pmetrics_subject("outeq_1", "input_1"), &parameters)
         .expect("prefixed-looking names resolve exactly");
-    model
-        .log_likelihood(
-            &pmetrics_subject("outeq_1", "input_1"),
-            &parameters,
-            &assay_error_models("input_1"),
-        )
-        .expect("error model binds to the output named `input_1`");
+    for prediction in predictions.predictions() {
+        assert_eq!(prediction.outeq().as_str(), "input_1");
+    }
 
     for (input, outeq) in [("1", "input_1"), ("outeq_1", "1")] {
         assert!(model
@@ -502,33 +426,36 @@ out(cp) = central / v
 "#;
 
     #[test]
-    fn dsl_numeric_output_binds_error_models_from_pmetrics_data() {
+    fn dsl_numeric_output_from_pmetrics_data_predicts_like_a_named_output() {
         let numeric = runtime_ode(NUMERIC_DSL, "numeric_dsl");
         let named = runtime_ode(NAMED_DSL, "named_dsl");
         let values = [("ke", 0.2), ("v", 10.0)];
 
-        let numeric_ll = numeric
-            .log_likelihood(
+        let numeric_predictions = numeric
+            .predict(
                 &pmetrics_subject("1", "1"),
                 &Parameters::with_model(&numeric, values).unwrap(),
-                &assay_error_models("1"),
             )
-            .expect("assay error model for DSL output `1` binds");
-        let named_ll = named
-            .log_likelihood(
+            .expect("DSL output `1` resolves");
+        let named_predictions = named
+            .predict(
                 &pmetrics_subject("iv", "cp"),
                 &Parameters::with_model(&named, values).unwrap(),
-                &assay_error_models("cp"),
             )
-            .expect("assay error model for DSL output `cp` binds");
-        assert!(numeric_ll.is_finite());
-        assert_relative_eq!(numeric_ll, named_ll, max_relative = 1e-12);
+            .expect("DSL output `cp` resolves");
+        let numeric_values = prediction_values(&numeric_predictions);
+        assert!(numeric_values.iter().all(|value| *value > 0.0));
+        for (numeric, named) in numeric_values
+            .iter()
+            .zip(prediction_values(&named_predictions))
+        {
+            assert_relative_eq!(*numeric, named, max_relative = 1e-12);
+        }
 
         assert!(numeric
-            .log_likelihood(
-                &pmetrics_subject("1", "1"),
+            .predict(
+                &pmetrics_subject("1", "outeq_1"),
                 &Parameters::with_model(&numeric, values).unwrap(),
-                &assay_error_models("outeq_1"),
             )
             .is_err());
         assert!(numeric

@@ -4,8 +4,12 @@
 //! likelihood cache. Between events every particle is advanced with adaptive
 //! Euler-Maruyama steps. At each observation the particles are weighted by
 //! the observation's likelihood and resampled (a bootstrap particle filter).
-//! The weights come from any [`ObservationModel`], so the filter scores
-//! assay error and residual error alike.
+//!
+//! The weights come from an [`ObservationModel`], which pharmsol does not
+//! implement: the error models live downstream. [`SDE::predict`] needs none
+//! and runs the particles free. [`SDE::log_likelihood`] returns the filter's
+//! (cached) likelihood estimate, and [`SDE::filter`] returns the filtered
+//! particles along with it.
 //!
 //! Simulation is deterministic: the random streams depend only on the seed,
 //! the subject and the event being simulated, never on the parameters. Two
@@ -14,8 +18,12 @@
 
 mod em;
 mod native;
+mod observation;
 
 pub use native::NativeSde;
+pub use observation::ObservationModel;
+
+use std::sync::Arc;
 
 use diffsol::{NalgebraContext, Vector};
 use ndarray::Array2;
@@ -28,10 +36,10 @@ use em::EmScratch;
 use super::model::{
     fill_active_rates, prepare_occasion, with_subject_context, InfusionDose, Model, Step,
 };
-use super::{parameters_hash, Cache, Equation, Simulation, ValidatedModelMetadata};
+use super::{parameters_hash, Cache, Equation, ValidatedModelMetadata};
 use crate::data::event::Observation;
 use crate::simulator::cache::{SdeLikelihoodCache, DEFAULT_CACHE_SIZE};
-use crate::simulator::likelihood::{ObservationModel, ParticlePredictions};
+use crate::simulator::predictions::ParticlePredictions;
 use crate::simulator::V;
 use crate::{Covariates, Occasion, PharmsolError, Subject};
 
@@ -67,7 +75,9 @@ pub trait SdeModel: Model {
 
 /// An [`SdeModel`] simulated with particles, with a likelihood cache.
 ///
-/// Caching is on by default; see [`Cache`]. Clones share the cache.
+/// The cache holds [`Self::log_likelihood`] estimates for observation models
+/// whose [`ObservationModel::cache_key`] is `Some`. Caching is on by
+/// default; see [`Cache`]. Clones share the cache.
 #[derive(Clone, Debug)]
 pub struct SDE<M = NativeSde> {
     model: M,
@@ -232,7 +242,7 @@ impl<M: SdeModel> SDE<M> {
                     if let Some(observation_model) = observation_model {
                         let column = &run.values[first..];
                         let rng = &mut run.streams.next();
-                        match filter(observation, column, observation_model, rng)? {
+                        match weigh_and_resample(observation, column, observation_model, rng)? {
                             Some(filtered) => {
                                 run.log_likelihood += filtered.log_mean;
                                 particles = filtered
@@ -328,29 +338,102 @@ impl<M: SdeModel> SDE<M> {
         )
     }
 
-    /// Cached particle-filter log-likelihood.
-    fn cached_log_likelihood<O: ObservationModel + ?Sized>(
+    /// Particle-filter estimate of the log-likelihood of the subject's
+    /// observations under `observation_model`.
+    ///
+    /// The estimate is deterministic for a given seed. It is cached when
+    /// caching is enabled and [`ObservationModel::cache_key`] returns `Some`.
+    ///
+    /// Errors before simulating if `observation_model` names an output this
+    /// equation does not declare or fails [`ObservationModel::validate`].
+    /// The filter stops early, returning negative infinity, at the first
+    /// observation that rules out every particle.
+    pub fn log_likelihood<O: ObservationModel + ?Sized>(
         &self,
         subject: &Subject,
         parameters: &[f64],
         observation_model: &O,
     ) -> Result<f64, PharmsolError> {
+        self.validate_observation_model(observation_model)?;
         let simulate = || {
             self.run_particles(subject, parameters, Mode::Score(observation_model))
                 .map(|run| run.log_likelihood)
         };
-        match &self.cache {
-            Some(cache) => {
+        match (&self.cache, observation_model.cache_key()) {
+            (Some(cache), Some(observation_key)) => {
                 let key = (
                     mix(mix(subject.hash(), self.seed), self.nparticles as u64),
                     parameters_hash(parameters),
-                    observation_model.cache_key(),
+                    observation_key,
                 );
                 cache.get_or_try_insert(key, simulate)
             }
-            None => simulate(),
+            _ => simulate(),
         }
     }
+
+    /// One particle-filter run through the whole subject: the filtered
+    /// particle predictions with their weights, and the log-likelihood
+    /// estimate they produced (the same value as [`Self::log_likelihood`]).
+    ///
+    /// Uncached. Every observation gets predictions, even after one ruled
+    /// out every particle; from then on the particles are no longer
+    /// filtered and carry uniform weights.
+    pub fn filter<O: ObservationModel + ?Sized>(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+        observation_model: &O,
+    ) -> Result<FilteredParticles, PharmsolError> {
+        self.validate_observation_model(observation_model)?;
+        let run = self.run_particles(
+            subject,
+            parameters,
+            Mode::ScoreAndPredict(observation_model),
+        )?;
+        let log_likelihood = run.log_likelihood;
+        Ok(FilteredParticles {
+            predictions: run.into_predictions(self.nparticles)?,
+            log_likelihood,
+        })
+    }
+
+    /// Check an observation model's own settings and that every label it
+    /// covers names one of this equation's outputs.
+    fn validate_observation_model<O: ObservationModel + ?Sized>(
+        &self,
+        observation_model: &O,
+    ) -> Result<(), PharmsolError> {
+        observation_model.validate()?;
+        let metadata = self.model.metadata();
+        for label in observation_model.labels() {
+            let declared = match metadata {
+                Some(metadata) => metadata.output_for_label(label.as_str()).is_some(),
+                None => label
+                    .index()
+                    .is_some_and(|slot| slot < self.model.noutputs()),
+            };
+            if !declared {
+                let available = metadata.map(|metadata| metadata.output_labels());
+                return Err(PharmsolError::unknown_output_label(
+                    label,
+                    available.as_deref().unwrap_or_default(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The result of [`SDE::filter`]: one particle-filter run.
+#[derive(Debug, Clone)]
+pub struct FilteredParticles {
+    /// The filtered particles with their normalized weights (see
+    /// [`ParticlePredictions`]).
+    pub predictions: ParticlePredictions,
+    /// The run's particle-filter estimate of the log-likelihood; negative
+    /// infinity when some observation ruled out every particle.
+    pub log_likelihood: f64,
 }
 
 /// What a particle run computes.
@@ -453,7 +536,7 @@ struct Filtered {
 /// Weight one observation's particles and resample them.
 ///
 /// Returns `None` when every particle has zero likelihood.
-fn filter<O: ObservationModel + ?Sized>(
+fn weigh_and_resample<O: ObservationModel + ?Sized>(
     observation: &Observation,
     values: &[f64],
     observation_model: &O,
@@ -474,10 +557,12 @@ fn filter<O: ObservationModel + ?Sized>(
             ),
         };
         // A particle the observation cannot have come from (including one
-        // whose state diverged to NaN) gets zero weight.
+        // whose state diverged to NaN) gets zero weight. A non-finite density
+        // returned as `Ok` is treated the same as `NonFiniteLikelihood`, so an
+        // implementation that skips the check cannot turn the weights into NaN.
         let log_weight = match log_density {
-            Ok(log_density) => log_density,
-            Err(PharmsolError::NonFiniteLikelihood(_)) => f64::NEG_INFINITY,
+            Ok(log_density) if log_density.is_finite() => log_density,
+            Ok(_) | Err(PharmsolError::NonFiniteLikelihood(_)) => f64::NEG_INFINITY,
             Err(error) => return Err(error),
         };
         max_log_weight = max_log_weight.max(log_weight);
@@ -591,55 +676,19 @@ impl<M: SdeModel> Equation for SDE<M> {
     }
 
     /// Free-running particle predictions: each particle follows its own path
-    /// through every observation.
-    fn predict(
+    /// through every observation. Uncached.
+    fn predict_shared(
         &self,
         subject: &Subject,
         parameters: &[f64],
-    ) -> Result<ParticlePredictions, PharmsolError> {
+    ) -> Result<Arc<ParticlePredictions>, PharmsolError> {
         self.run_particles::<dyn ObservationModel>(subject, parameters, Mode::Predict)?
             .into_predictions(self.nparticles)
-    }
-
-    /// Particle-filter estimate of the log-likelihood, cached.
-    fn log_likelihood<O: ObservationModel + ?Sized>(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-        observation_model: &O,
-    ) -> Result<f64, PharmsolError> {
-        self.validate_observation_model(observation_model)?;
-        self.cached_log_likelihood(subject, parameters, observation_model)
-    }
-
-    /// With an observation model, one particle-filter run: the filtered
-    /// particle predictions with their weights, and the log-likelihood
-    /// estimate they produced. Uncached. Without one, [`Self::predict`].
-    fn simulate(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-        observation_model: Option<&dyn ObservationModel>,
-    ) -> Result<Simulation<ParticlePredictions>, PharmsolError> {
-        let Some(observation_model) = observation_model else {
-            return Ok(Simulation {
-                predictions: self.predict(subject, parameters)?,
-                log_likelihood: None,
-            });
-        };
-        self.validate_observation_model(observation_model)?;
-        let run = self.run_particles(
-            subject,
-            parameters,
-            Mode::ScoreAndPredict(observation_model),
-        )?;
-        let log_likelihood = run.log_likelihood;
-        Ok(Simulation {
-            predictions: run.into_predictions(self.nparticles)?,
-            log_likelihood: Some(log_likelihood),
-        })
+            .map(Arc::new)
     }
 }
 
+#[cfg(test)]
+pub(crate) mod test_observation;
 #[cfg(test)]
 mod tests;

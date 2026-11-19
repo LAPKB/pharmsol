@@ -1,3 +1,7 @@
+#[path = "support/normal_observation.rs"]
+mod normal_observation;
+
+use normal_observation::NormalObservation;
 use pharmsol::*;
 
 /// Test the particle filter (SDE) likelihood estimation
@@ -50,9 +54,7 @@ fn test_particle_filter_likelihood() {
         )
         .expect("particle filter metadata should validate");
 
-    let ems = OutputModels::default()
-        .add("cp", OutputModel::assay([0.5]))
-        .unwrap();
+    let observation_model = NormalObservation::new("cp", 0.5);
 
     // Run the particle filter multiple times to get statistics
     const NUM_RUNS: usize = 10;
@@ -62,7 +64,7 @@ fn test_particle_filter_likelihood() {
         let parameters = Parameters::with_model(&sde, [("ke0", 1.0)])
             .expect("particle filter parameters should validate");
         let ll = sde
-            .log_likelihood(&subject, &parameters, &ems)
+            .log_likelihood(&subject, &parameters, &observation_model)
             .unwrap()
             .exp();
         println!("Run {}: likelihood = {}", i + 1, ll);

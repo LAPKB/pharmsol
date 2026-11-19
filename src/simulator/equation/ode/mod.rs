@@ -21,7 +21,7 @@ use diffsol::{
 
 use crate::{
     data::Covariates,
-    prelude::simulator::SubjectPredictions,
+    simulator::predictions::SubjectPredictions,
     simulator::{M as Matrix, V},
     Occasion, PharmsolError, Subject,
 };
@@ -29,12 +29,8 @@ use crate::{
 use super::model::{
     fill_active_rates, prepare_occasion, with_subject_context, InfusionDose, Model, Step,
 };
-use super::{
-    salted_parameters_hash, simulate_deterministic, Cache, Equation, Simulation,
-    ValidatedModelMetadata,
-};
+use super::{salted_parameters_hash, Cache, Equation, ValidatedModelMetadata};
 use crate::simulator::cache::{PredictionCache, PredictionKey, DEFAULT_CACHE_SIZE};
-use crate::simulator::likelihood::ObservationModel;
 use closure::PMProblem;
 
 const RTOL: f64 = 1e-4;
@@ -211,21 +207,6 @@ impl<M: OdeModel> ODE<M> {
 
     pub fn state_index(&self, name: &str) -> Option<usize> {
         self.model.metadata()?.state_index(name)
-    }
-
-    /// Predictions for a subject, from the cache when possible.
-    fn predictions(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-    ) -> Result<Arc<SubjectPredictions>, PharmsolError> {
-        let simulate = || self.solve(subject, parameters).map(Arc::new);
-        match &self.cache {
-            Some(cache) => {
-                cache.get_or_try_insert(self.prediction_key(subject, parameters), simulate)
-            }
-            None => simulate(),
-        }
     }
 
     pub(crate) fn prediction_key(&self, subject: &Subject, parameters: &[f64]) -> PredictionKey {
@@ -539,33 +520,19 @@ impl<M: OdeModel> Equation for ODE<M> {
         self.model.noutputs()
     }
 
-    fn predict(
+    /// Predictions from the cache when possible, without copying them.
+    fn predict_shared(
         &self,
         subject: &Subject,
         parameters: &[f64],
-    ) -> Result<SubjectPredictions, PharmsolError> {
-        self.predictions(subject, parameters)
-            .map(Arc::unwrap_or_clone)
-    }
-
-    fn log_likelihood<O: ObservationModel + ?Sized>(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-        observation_model: &O,
-    ) -> Result<f64, PharmsolError> {
-        self.validate_observation_model(observation_model)?;
-        self.predictions(subject, parameters)?
-            .log_likelihood(observation_model)
-    }
-
-    fn simulate(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-        observation_model: Option<&dyn ObservationModel>,
-    ) -> Result<Simulation<SubjectPredictions>, PharmsolError> {
-        simulate_deterministic(self, subject, parameters, observation_model)
+    ) -> Result<Arc<SubjectPredictions>, PharmsolError> {
+        let simulate = || self.solve(subject, parameters).map(Arc::new);
+        match &self.cache {
+            Some(cache) => {
+                cache.get_or_try_insert(self.prediction_key(subject, parameters), simulate)
+            }
+            None => simulate(),
+        }
     }
 }
 

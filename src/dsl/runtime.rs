@@ -62,7 +62,7 @@ use super::jit::{compile_execution_model_to_jit, JitCompileError};
 use super::model::{RuntimeAnalyticalModel, RuntimeOdeModel, RuntimeSdeModel};
 use super::model_info::RuntimeModelInfo;
 use crate::{
-    simulator::likelihood::{ParticlePredictions, Prediction, SubjectPredictions},
+    simulator::predictions::{ParticlePredictions, Prediction, SubjectPredictions},
     Equation, Parameters, PharmsolError, PointPredictions, Subject, ValidatedModelMetadata,
 };
 use pharmsol_dsl::{

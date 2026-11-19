@@ -1,5 +1,5 @@
-//! Shared bench fixtures (workloads, subjects, params, error models, model factories)
-//! used by both `native_matrix.rs` and `dsl_matrix.rs`. Every backend measures the
+//! Shared bench fixtures (workloads, subjects, params, model factories and the
+//! timed loops) used by both `native_matrix.rs` and `dsl_matrix.rs`. Every backend measures the
 //! same model + subject + params so only the engine varies between cells.
 //!
 //! Workloads:
@@ -16,9 +16,12 @@
 
 #![allow(dead_code)]
 
+use std::hint::black_box;
+
+use criterion::{BatchSize, Bencher};
 use ndarray::Array2;
 use pharmsol::prelude::*;
-use pharmsol::{Analytical, ODE};
+use pharmsol::{map_predictions, Analytical, Cache, Parameters, ODE};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Workload {
@@ -41,8 +44,8 @@ impl Workload {
     }
 }
 
-/// Solver kinds. SDE is not benched: at any particle count that exercises the
-/// particle filter it dwarfs the rest of the suite.
+/// Solver kinds. SDE is not benched: at any particle count worth measuring it
+/// dwarfs the rest of the suite.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SolverKind {
     Ode,
@@ -67,7 +70,7 @@ impl SolverKind {
 /// 9 sampling points for the short workload.
 const SHORT_TIMES: &[f64] = &[0.25, 0.5, 1.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0];
 
-/// Synthetic plasma concentrations — only need to exercise the likelihood path, not match any model.
+/// Synthetic plasma concentrations; they give the subjects observed values and need not match any model.
 const SHORT_OBS: &[f64] = &[0.50, 0.90, 1.60, 2.40, 2.10, 1.50, 1.05, 0.72, 0.48];
 
 /// 14 sampling points for the repeat workload.
@@ -102,12 +105,12 @@ fn build_subject(workload: Workload, id: String, offset: f64) -> Subject {
     builder.build()
 }
 
-/// Single subject with observations — used for log-likelihood benches.
-pub fn subject_for_likelihood(workload: Workload) -> Subject {
+/// Single subject with observations, used for the single-subject benches.
+pub fn single_subject(workload: Workload) -> Subject {
     build_subject(workload, format!("{}-lik", workload.label()), 0.0)
 }
 
-/// Population dataset for `log_likelihood_matrix`: `n` subjects, same template with small obs perturbations.
+/// Population dataset for `map_predictions`: `n` subjects, same template with small obs perturbations.
 pub fn matrix_data(workload: Workload, n: usize) -> Data {
     let subjects = (0..n)
         .map(|i| {
@@ -131,7 +134,7 @@ pub fn named_params(workload: Workload) -> Vec<(&'static str, f64)> {
     }
 }
 
-/// Support-point grid for `log_likelihood_matrix`, shape `(n, nparams)`.
+/// Support-point grid for `map_predictions`, shape `(n, nparams)`.
 /// Rows are small perturbations of [`named_params`], so every row is a distinct cache key.
 pub fn support_points(workload: Workload, n: usize) -> Array2<f64> {
     let base: Vec<f64> = named_params(workload).into_iter().map(|(_, v)| v).collect();
@@ -143,11 +146,58 @@ pub fn support_points(workload: Workload, n: usize) -> Array2<f64> {
     })
 }
 
-// ───────────────────────────── Error models ──────────────────────────
+// ───────────────────────────── Timed loops ───────────────────────────
 
-/// Assay error model for `log_likelihood` / `log_likelihood_matrix`.
-pub fn assay_error_models() -> OutputModels {
-    OutputModels::new().with("plasma", OutputModel::assay([0.1, 0.1]))
+/// Sum of a subject's predictions: a cheap reduction standing in for what a
+/// caller does with them, so the measured work is the simulation.
+fn prediction_sum(predictions: &impl PointPredictions) -> f64 {
+    predictions
+        .point()
+        .iter()
+        .map(|prediction| prediction.prediction())
+        .sum()
+}
+
+/// One subject at one support point through `predict_shared`.
+pub fn bench_predict<E: Equation>(
+    b: &mut Bencher,
+    model: &E,
+    subject: &Subject,
+    theta: &Parameters,
+) {
+    b.iter(|| {
+        black_box(
+            model
+                .predict_shared(black_box(subject), black_box(theta))
+                .unwrap(),
+        )
+    });
+}
+
+/// Every subject at every support point through `map_predictions`.
+pub fn bench_matrix<E: Equation + Cache>(
+    b: &mut Bencher,
+    model: &E,
+    data: &Data,
+    theta: &Array2<f64>,
+) {
+    // Clearing outside the timed region keeps the cache's miss + insert cost in
+    // the measurement, which is what a fresh NPAG cycle pays.
+    b.iter_batched(
+        || model.clear_cache(),
+        |()| {
+            black_box(
+                map_predictions(
+                    black_box(model),
+                    black_box(data),
+                    black_box(theta),
+                    |_, predictions| prediction_sum(predictions.unwrap().as_ref()),
+                )
+                .unwrap(),
+            )
+        },
+        BatchSize::PerIteration,
+    );
 }
 
 // ───────────────────────────── Macro factories ───────────────────────

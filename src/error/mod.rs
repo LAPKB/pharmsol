@@ -2,7 +2,6 @@ use thiserror::Error;
 
 use pharmsol_dsl::RouteKind;
 
-use crate::data::error_model::ErrorModelError;
 use crate::data::parser::pmetrics::DataError;
 
 use crate::parameters::ParameterError;
@@ -14,8 +13,6 @@ use ndarray::ShapeError;
 pub enum PharmsolError {
     #[error("Parameter error: {0}")]
     ParameterError(#[from] ParameterError),
-    #[error("Error in the error model: {0}")]
-    ErrorModelError(#[from] ErrorModelError),
     #[error("Covariate error: {0}")]
     CovariateError(#[from] CovariateError),
     #[error("Shape error: {0}")]
@@ -26,14 +23,8 @@ pub enum PharmsolError {
     DiffsolError(String),
     #[error("Other error: {0}")]
     OtherError(String),
-    #[error("Error setting up progress bar: {0}")]
-    ProgressBarError(String),
     #[error("Likelihood is not finite: {0}")]
     NonFiniteLikelihood(f64),
-    #[error("The calculated likelihood is zero")]
-    ZeroLikelihood,
-    #[error("Missing observation in prediction")]
-    MissingObservation,
     #[error("Input label `{label}` could not be resolved to a route input{available}")]
     UnknownInputLabel { label: String, available: String },
     #[error("Output label `{label}` could not be resolved to an output{available}")]

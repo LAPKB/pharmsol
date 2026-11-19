@@ -566,8 +566,8 @@ impl Subject {
                         obs.time().to_bits().hash(&mut hasher);
                         obs.value().map(f64::to_bits).hash(&mut hasher);
                         obs.outeq().hash(&mut hasher);
-                        // Cached predictions carry these, and the likelihood
-                        // reads them back.
+                        // Cached predictions carry these, and downstream
+                        // scoring reads them back.
                         (obs.censoring() as u8).hash(&mut hasher);
                         obs.errorpoly()
                             .map(|poly| {

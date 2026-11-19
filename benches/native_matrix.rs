@@ -6,22 +6,19 @@
 //! that repeats the same call against a warm cache only times a hash lookup.
 //!
 //! IDs:
-//! - `native/log-likelihood`    → `{workload}/{solver}` (cache disabled)
-//! - `native/likelihood-matrix` → `{workload}/ode` (cache cleared before each iteration)
-//! - `native/cache-hit`         → `{workload}/{solver}` (warm cache, lookup + clone only)
+//! - `native/predict`           → `{workload}/{solver}` (cache disabled)
+//! - `native/prediction-matrix` → `{workload}/ode` (cache cleared before each iteration)
+//! - `native/cache-hit`         → `{workload}/{solver}` (warm cache, lookup + `Arc` clone only)
 
-use std::hint::black_box;
 use std::time::Duration;
 
-use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
-use pharmsol::prelude::simulator::log_likelihood_matrix;
-use pharmsol::prelude::*;
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use pharmsol::{Cache, Equation, Parameters};
 
 mod common;
 use common::{
-    assay_error_models, macro_analytical, macro_ode, matrix_data, named_params,
-    subject_for_likelihood, support_points, SolverKind, Workload,
+    bench_matrix, bench_predict, macro_analytical, macro_ode, matrix_data, named_params,
+    single_subject, support_points, SolverKind, Workload,
 };
 
 const MATRIX_N_SUBJECTS: usize = 32;
@@ -31,70 +28,22 @@ fn id(workload: Workload, kind: SolverKind) -> BenchmarkId {
     BenchmarkId::from_parameter(format!("{}/{}", workload.label(), kind.label()))
 }
 
-fn bench_log_likelihood<E: Equation>(
-    b: &mut criterion::Bencher,
-    model: &E,
-    subject: &Subject,
-    theta: &Parameters,
-    error_models: &OutputModels,
-) {
-    b.iter(|| {
-        black_box(
-            model
-                .log_likelihood(
-                    black_box(subject),
-                    black_box(theta),
-                    black_box(error_models),
-                )
-                .unwrap(),
-        )
-    });
-}
-
-fn bench_matrix<E: Equation + Cache>(
-    b: &mut criterion::Bencher,
-    model: &E,
-    data: &Data,
-    theta: &ndarray::Array2<f64>,
-    error_models: &OutputModels,
-) {
-    // Clearing outside the timed region keeps the cache's miss + insert cost in
-    // the measurement, which is what a fresh NPAG cycle pays.
-    b.iter_batched(
-        || model.clear_cache(),
-        |()| {
-            black_box(
-                log_likelihood_matrix(
-                    black_box(model),
-                    black_box(data),
-                    black_box(theta),
-                    black_box(error_models),
-                    false,
-                )
-                .unwrap(),
-            )
-        },
-        BatchSize::PerIteration,
-    );
-}
-
-fn log_likelihood_group(c: &mut Criterion) {
-    let mut group = c.benchmark_group("native/log-likelihood");
-    let error_models = assay_error_models();
+fn predict_group(c: &mut Criterion) {
+    let mut group = c.benchmark_group("native/predict");
 
     for workload in Workload::all() {
-        let subject = subject_for_likelihood(workload);
+        let subject = single_subject(workload);
         for kind in SolverKind::all() {
             group.bench_function(id(workload, kind), |b| match kind {
                 SolverKind::Ode => {
                     let model = macro_ode(workload).disable_cache();
                     let theta = Parameters::with_model(&model, named_params(workload)).unwrap();
-                    bench_log_likelihood(b, &model, &subject, &theta, &error_models);
+                    bench_predict(b, &model, &subject, &theta);
                 }
                 SolverKind::Analytical => {
                     let model = macro_analytical(workload).disable_cache();
                     let theta = Parameters::with_model(&model, named_params(workload)).unwrap();
-                    bench_log_likelihood(b, &model, &subject, &theta, &error_models);
+                    bench_predict(b, &model, &subject, &theta);
                 }
             });
         }
@@ -105,40 +54,36 @@ fn log_likelihood_group(c: &mut Criterion) {
 
 /// ODE only. An analytical matrix finishes in ~1 ms, so rayon scheduling
 /// dominates and run-to-run drift reached ±10%; its solver cost is already
-/// covered by `native/log-likelihood`.
-fn likelihood_matrix_group(c: &mut Criterion) {
-    let mut group = c.benchmark_group("native/likelihood-matrix");
+/// covered by `native/predict`.
+fn prediction_matrix_group(c: &mut Criterion) {
+    let mut group = c.benchmark_group("native/prediction-matrix");
     group.sample_size(20);
     group.measurement_time(Duration::from_secs(10));
-
-    let error_models = assay_error_models();
 
     for workload in Workload::all() {
         let data = matrix_data(workload, MATRIX_N_SUBJECTS);
         let theta = support_points(workload, MATRIX_N_SUPPORT);
         group.bench_function(id(workload, SolverKind::Ode), |b| {
-            bench_matrix(b, &macro_ode(workload), &data, &theta, &error_models)
+            bench_matrix(b, &macro_ode(workload), &data, &theta)
         });
     }
 
     group.finish();
 }
 
-/// One cell guarding the cache-hit path (subject hash + parameter hash + lookup
-/// + clone). ODE only: it is the solver whose cost the cache exists to hide.
+/// One cell guarding the cache-hit path: subject hash, parameter hash, lookup
+/// and `Arc` clone. ODE only: it is the solver whose cost the cache exists to
+/// hide.
 fn cache_hit_group(c: &mut Criterion) {
     let mut group = c.benchmark_group("native/cache-hit");
-    let error_models = assay_error_models();
     let workload = Workload::Repeat;
-    let subject = subject_for_likelihood(workload);
+    let subject = single_subject(workload);
     let model = macro_ode(workload);
     let theta = Parameters::with_model(&model, named_params(workload)).unwrap();
-    model
-        .log_likelihood(&subject, &theta, &error_models)
-        .unwrap();
+    model.predict_shared(&subject, &theta).unwrap();
 
     group.bench_function(id(workload, SolverKind::Ode), |b| {
-        bench_log_likelihood(b, &model, &subject, &theta, &error_models)
+        bench_predict(b, &model, &subject, &theta)
     });
 
     group.finish();
@@ -146,8 +91,8 @@ fn cache_hit_group(c: &mut Criterion) {
 
 criterion_group!(
     native_matrix,
-    log_likelihood_group,
-    likelihood_matrix_group,
+    predict_group,
+    prediction_matrix_group,
     cache_hit_group
 );
 criterion_main!(native_matrix);

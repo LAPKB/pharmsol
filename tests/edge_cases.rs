@@ -1,12 +1,16 @@
 //! Unusual models and subjects: each must give a result or an error, never a
 //! panic or a hang, and every equation family must agree on what is invalid.
 
+#[path = "support/normal_observation.rs"]
+mod normal_observation;
+
 use std::collections::HashMap;
 
 use ndarray::array;
-use pharmsol::prelude::simulator::log_likelihood_matrix;
+use normal_observation::NormalObservation;
 use pharmsol::prelude::*;
 use pharmsol::{equation, Analytical, Cache, Censor, ODE, SDE};
+use rayon::prelude::*;
 
 fn ode() -> ODE {
     ODE::new(
@@ -65,8 +69,8 @@ fn sde(nparticles: usize) -> SDE {
 
 const P: [f64; 3] = [0.5, 10.0, 0.0];
 
-fn error_models() -> OutputModels {
-    OutputModels::new().with(0, OutputModel::assay([1.0]))
+fn observation_model() -> NormalObservation {
+    NormalObservation::new(0, 1.0)
 }
 
 fn assert_err_contains<T: std::fmt::Debug>(result: Result<T, PharmsolError>, needle: &str) {
@@ -120,7 +124,7 @@ fn unrepresentable_infusions_are_rejected_by_every_family() {
 /// Cached predictions carry each observation's censoring, so two subjects
 /// that differ only in censoring must not share a cache entry.
 #[test]
-fn cached_likelihood_follows_censoring() {
+fn cached_predictions_follow_censoring() {
     let subject = |censoring| {
         Subject::builder("s")
             .bolus(0.0, 100.0, 0)
@@ -129,20 +133,17 @@ fn cached_likelihood_follows_censoring() {
     };
     let observed = subject(Censor::None);
     let censored = subject(Censor::BLOQ);
-    let models = error_models();
+    let censoring = |ode: &ODE, subject: &Subject| {
+        ode.predict(subject, &P).unwrap().predictions()[0].censoring()
+    };
     let ode = ode();
 
-    let cached = (
-        ode.log_likelihood(&observed, &P, &models).unwrap(),
-        ode.log_likelihood(&censored, &P, &models).unwrap(),
-    );
+    // The first call fills the cache; the second subject must not hit it.
+    let cached = (censoring(&ode, &observed), censoring(&ode, &censored));
     let ode = ode.disable_cache();
-    let uncached = (
-        ode.log_likelihood(&observed, &P, &models).unwrap(),
-        ode.log_likelihood(&censored, &P, &models).unwrap(),
-    );
+    let uncached = (censoring(&ode, &observed), censoring(&ode, &censored));
     assert_eq!(cached, uncached);
-    assert_ne!(uncached.0, uncached.1);
+    assert_eq!(uncached, (Censor::None, Censor::BLOQ));
 }
 
 #[test]
@@ -248,7 +249,7 @@ fn an_sde_without_particles_is_an_error() {
     let model = sde(0);
     assert_err_contains(model.predict(&subject, &P), "particle");
     assert_err_contains(
-        model.log_likelihood(&subject, &P, &error_models()),
+        model.log_likelihood(&subject, &P, &observation_model()),
         "particle",
     );
 }
@@ -266,7 +267,7 @@ fn sde_steps_never_cross_a_tiny_interval() {
 }
 
 #[test]
-fn sde_likelihood_matrix_with_duplicate_subjects_and_points_completes() {
+fn parallel_sde_likelihoods_with_duplicate_subjects_and_points_complete() {
     // Identical subjects and support points share cache keys while the
     // particle filter runs parallel work; this must neither deadlock nor
     // disagree with the direct computation.
@@ -279,14 +280,42 @@ fn sde_likelihood_matrix_with_duplicate_subjects_and_points_completes() {
     let points = array![[0.5, 10.0, 0.3], [0.5, 10.0, 0.3], [0.4, 10.0, 0.3]];
     let model = sde(256);
 
-    let matrix = log_likelihood_matrix(&model, &data, &points, &error_models(), false).unwrap();
+    let observation_model = observation_model();
+    let subjects = data.subjects();
+
+    let cells: Vec<(usize, usize)> = (0..subjects.len())
+        .flat_map(|row| (0..points.nrows()).map(move |column| (row, column)))
+        .collect();
+    let scores: Vec<f64> = cells
+        .par_iter()
+        .map(|&(row, column)| {
+            model
+                .log_likelihood(
+                    subjects[row],
+                    &points.row(column).to_vec(),
+                    &observation_model,
+                )
+                .unwrap()
+        })
+        .collect();
     let direct = model
         .clone()
         .disable_cache()
-        .log_likelihood(&subject, &[0.5, 10.0, 0.3], &error_models())
+        .log_likelihood(&subject, &[0.5, 10.0, 0.3], &observation_model)
         .unwrap();
-    for row in 0..6 {
-        assert_eq!(matrix[[row, 0]], direct);
-        assert_eq!(matrix[[row, 1]], direct);
+    for (&(_, column), score) in cells.iter().zip(&scores) {
+        if column < 2 {
+            assert_eq!(*score, direct);
+        }
     }
+
+    // The same grid of free-running predictions completes as well.
+    let means = pharmsol::map_predictions(&model, &data, &points, |_, predictions| {
+        predictions.map(|predictions| predictions.mean()[0])
+    })
+    .unwrap();
+    assert_eq!(means.dim(), (6, 3));
+    assert!(means
+        .iter()
+        .all(|mean| mean.as_ref().is_ok_and(|m| m.is_finite())));
 }

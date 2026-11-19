@@ -2444,7 +2444,7 @@ model analytical_mixed {
 
     #[test]
     fn jit_and_native_sde_particle_filters_agree() {
-        use crate::{OutputModel, OutputModels};
+        use crate::simulator::equation::sde::test_observation::NormalObservation;
 
         let model = load_corpus_model("vanco_sde");
         let jit = compile_sde_model_to_jit(&model)
@@ -2503,14 +2503,14 @@ model analytical_mixed {
             .observation(2.0, 0.045, "cp")
             .observation(4.0, 0.03, "cp")
             .build();
-        let error_models = OutputModels::new().with("cp", OutputModel::assay([0.01]));
+        let observation_model = NormalObservation::new("cp", 0.01);
         let support = [1.1, 0.2, 0.12, 0.08, 15.0, 0.3];
 
         let jit_ll = jit
-            .log_likelihood(&subject, &support, &error_models)
+            .log_likelihood(&subject, &support, &observation_model)
             .expect("jit particle filter");
         let native_ll = native
-            .log_likelihood(&subject, &support, &error_models)
+            .log_likelihood(&subject, &support, &observation_model)
             .expect("native particle filter");
         assert!(jit_ll.is_finite());
         assert_relative_eq!(jit_ll, native_ll, max_relative = 1e-6);

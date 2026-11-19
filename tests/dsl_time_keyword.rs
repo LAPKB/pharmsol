@@ -79,3 +79,11 @@ fn t_keyword_reflects_the_current_simulation_time_jit() -> Result<(), Box<dyn st
     let model = compile_module_source_to_runtime(MODEL_SOURCE, Some("time_probe"), |_, _| {})?;
     assert_time_echo_matches_observation_times(&model)
 }
+
+#[test]
+#[cfg(feature = "dsl")]
+fn time_alias_reflects_the_current_simulation_time_jit() -> Result<(), Box<dyn std::error::Error>> {
+    let model =
+        compile_module_source_to_runtime(MODEL_SOURCE_TIME_ALIAS, Some("time_probe"), |_, _| {})?;
+    assert_time_echo_matches_observation_times(&model)
+}
