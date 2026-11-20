@@ -3,6 +3,7 @@
 
 use std::error::Error;
 use std::io;
+use std::sync::Arc;
 
 use diffsol::Vector;
 use pharmsol::dsl::{self, CompiledRuntimeModel, RuntimePredictions};
@@ -617,7 +618,7 @@ fn reference_ode_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
     )
     .expect("reference ODE parameters should validate");
 
-    Ok(model.predict(&subject, &parameters)?)
+    Ok(Arc::unwrap_or_clone(model.predict(&subject, &parameters)?))
 }
 
 fn reference_ode_full_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
@@ -799,7 +800,7 @@ fn reference_ode_full_predictions() -> Result<SubjectPredictions, Box<dyn Error>
     )
     .expect("reference full ODE parameters should validate");
 
-    Ok(model.predict(&subject, &parameters)?)
+    Ok(Arc::unwrap_or_clone(model.predict(&subject, &parameters)?))
 }
 
 fn reference_analytical_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
@@ -858,7 +859,7 @@ fn reference_analytical_predictions() -> Result<SubjectPredictions, Box<dyn Erro
     )
     .expect("reference analytical parameters should validate");
 
-    Ok(model.predict(&subject, &parameters)?)
+    Ok(Arc::unwrap_or_clone(model.predict(&subject, &parameters)?))
 }
 
 fn reference_analytical_full_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
@@ -961,7 +962,7 @@ fn reference_analytical_full_predictions() -> Result<SubjectPredictions, Box<dyn
     )
     .expect("reference full analytical parameters should validate");
 
-    Ok(model.predict(&subject, &parameters)?)
+    Ok(Arc::unwrap_or_clone(model.predict(&subject, &parameters)?))
 }
 
 fn reference_sde_predictions() -> Result<ParticlePredictions, Box<dyn Error>> {
@@ -1034,5 +1035,5 @@ fn reference_sde_predictions() -> Result<ParticlePredictions, Box<dyn Error>> {
     )
     .expect("reference SDE parameters should validate");
 
-    Ok(model.predict(&subject, &parameters)?)
+    Ok(Arc::unwrap_or_clone(model.predict(&subject, &parameters)?))
 }

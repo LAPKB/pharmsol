@@ -29,7 +29,8 @@ pub use particles::ParticlePredictions;
 pub use prediction::Prediction;
 pub use subject::{PopulationPredictions, SubjectPredictions};
 
-use ndarray::{Array2, ArrayView1, Axis, ShapeBuilder, Zip};
+use ndarray::{Array2, Axis, ShapeBuilder};
+use rayon::prelude::*;
 
 use crate::{Data, Equation, PharmsolError, Subject};
 
@@ -48,6 +49,12 @@ pub trait PointPredictions {
     fn point(&self) -> Cow<'_, [Prediction]>;
 }
 
+impl<T: PointPredictions + ?Sized> PointPredictions for Arc<T> {
+    fn point(&self) -> Cow<'_, [Prediction]> {
+        (**self).point()
+    }
+}
+
 /// Simulate every subject at every support point, in parallel, and map each
 /// result through `f`.
 ///
@@ -61,14 +68,14 @@ pub trait PointPredictions {
 /// once with [`crate::ParameterOrder`] and reorder before calling this
 /// function.
 ///
-/// Each cell is simulated with [`Equation::predict_shared`], so cached
+/// Each cell is simulated with [`Equation::predict`], so cached
 /// predictions are handed to `f` without copying them.
 ///
 /// # Returns
 ///
 /// An `n_subjects × n_support_points` matrix: row `i` is subject `i`, column
 /// `j` is support point `j`. It is stored in column-major (Fortran) order,
-/// and subjects are processed in parallel, each over all support points.
+/// and the cells are computed in parallel.
 ///
 /// # Errors
 ///
@@ -134,28 +141,21 @@ where
         .map(|row| row.to_vec())
         .collect::<Vec<_>>();
 
-    // The result is allocated once, column-major, and filled in place: one
-    // parallel task per subject (row), each over every support point.
-    // `T` need not implement `Default` or `Clone`, so the cells start
-    // uninitialized.
-    // (`Zip` rather than `axis_iter_mut().into_par_iter()`, which would
-    // also require `T: Sync`.)
-    let mut cells = Array2::<T>::uninit((subject_slice.len(), n_support_points).f());
-    Zip::from(cells.rows_mut())
-        .and(ArrayView1::from(subject_slice))
-        .par_for_each(|mut row, subject| {
-            for (cell, support_point) in row.iter_mut().zip(&support_point_rows) {
-                cell.write(f(
-                    subject,
-                    equation.predict_shared(subject, support_point.as_slice()),
-                ));
-            }
-        });
-    // SAFETY: `cells` has one row per subject and one column per support
-    // point, and the loop above wrote every cell of every row. A panic in
-    // `f` propagates out of `for_each` before this point, leaking (not
-    // reading) the cells already written.
-    Ok(unsafe { cells.assume_init() })
+    // One parallel task per cell, collected in column-major order: cell `k`
+    // is subject `k % n_subjects` at support point `k / n_subjects`.
+    let n_subjects = subject_slice.len();
+    let cells: Vec<T> = (0..n_subjects * n_support_points)
+        .into_par_iter()
+        .map(|k| {
+            let subject = &subject_slice[k % n_subjects];
+            let support_point = &support_point_rows[k / n_subjects];
+            f(subject, equation.predict(subject, support_point))
+        })
+        .collect();
+    Ok(
+        Array2::from_shape_vec((n_subjects, n_support_points).f(), cells)
+            .expect("one cell per subject and support point"),
+    )
 }
 
 #[cfg(test)]

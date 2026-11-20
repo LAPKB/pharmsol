@@ -80,7 +80,7 @@ fn cache_hit_group(c: &mut Criterion) {
     let subject = single_subject(workload);
     let model = macro_ode(workload);
     let theta = Parameters::with_model(&model, named_params(workload)).unwrap();
-    model.predict_shared(&subject, &theta).unwrap();
+    model.predict(&subject, &theta).unwrap();
 
     group.bench_function(id(workload, SolverKind::Ode), |b| {
         bench_predict(b, &model, &subject, &theta)

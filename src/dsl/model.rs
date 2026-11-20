@@ -414,7 +414,7 @@ impl JitModel {
         &self.info
     }
 
-    fn validated_metadata(&self) -> &ValidatedModelMetadata {
+    pub(crate) fn validated_metadata(&self) -> &ValidatedModelMetadata {
         &self.metadata
     }
 
@@ -801,11 +801,6 @@ impl ODE<JitModel> {
     pub fn info(&self) -> &RuntimeModelInfo {
         self.model().info()
     }
-
-    /// The validated metadata of the compiled model.
-    pub fn metadata(&self) -> &ValidatedModelMetadata {
-        self.model().validated_metadata()
-    }
 }
 
 /// The closed-form kernel of a compiled analytical model and how to gather
@@ -869,11 +864,6 @@ impl Analytical<JitModel> {
     /// Public names and buffer sizes of the compiled model.
     pub fn info(&self) -> &RuntimeModelInfo {
         self.model().info()
-    }
-
-    /// The validated metadata of the compiled model.
-    pub fn metadata(&self) -> &ValidatedModelMetadata {
-        self.model().validated_metadata()
     }
 }
 
@@ -960,11 +950,6 @@ impl SDE<JitModel> {
     /// Public names and buffer sizes of the compiled model.
     pub fn info(&self) -> &RuntimeModelInfo {
         self.model().info()
-    }
-
-    /// The validated metadata of the compiled model.
-    pub fn metadata(&self) -> &ValidatedModelMetadata {
-        self.model().validated_metadata()
     }
 }
 
@@ -1198,7 +1183,7 @@ mod tests {
         )
         .expect("runtime ODE metadata should build");
 
-        let metadata = model.metadata();
+        let metadata = model.metadata().expect("JIT models carry metadata");
         assert_eq!(metadata.parameter_index("ke"), Some(0));
         assert_eq!(
             metadata.covariate("wt").unwrap().interpolation(),
@@ -1272,7 +1257,7 @@ mod tests {
         )
         .expect("array-state runtime metadata should build");
 
-        let metadata = model.metadata();
+        let metadata = model.metadata().expect("JIT models carry metadata");
         assert_eq!(metadata.states()[0].name(), "transit");
         assert_eq!(metadata.states()[1].name(), "central");
         assert_eq!(metadata.route_input_count(), 1);
@@ -1360,7 +1345,7 @@ mod tests {
         .with_particles(64);
 
         assert_eq!(model.info().particles, Some(64));
-        assert_eq!(model.metadata().particles(), Some(64));
+        assert_eq!(model.metadata().unwrap().particles(), Some(64));
     }
 
     fn analytical_projection_values(

@@ -521,7 +521,7 @@ impl<M: OdeModel> Equation for ODE<M> {
     }
 
     /// Predictions from the cache when possible, without copying them.
-    fn predict_shared(
+    fn predict(
         &self,
         subject: &Subject,
         parameters: &[f64],

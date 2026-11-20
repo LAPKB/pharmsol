@@ -386,15 +386,15 @@ fn particle_filter_is_deterministic() {
 }
 
 #[test]
-fn predict_shared_is_the_free_running_run() {
+fn predict_is_the_free_running_run() {
     let sde = simple_sde();
     let subject = filter_subject();
     let parameters = [1.0, 50.0];
 
-    let shared = sde.predict_shared(&subject, &parameters).unwrap();
-    let owned = sde.predict(&subject, &parameters).unwrap();
-    assert!(!shared.is_filtered());
-    assert_eq!(values(&shared), values(&owned));
+    let first = sde.predict(&subject, &parameters).unwrap();
+    let second = sde.predict(&subject, &parameters).unwrap();
+    assert!(!first.is_filtered());
+    assert_eq!(values(&first), values(&second));
 }
 
 #[test]

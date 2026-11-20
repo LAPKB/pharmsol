@@ -158,20 +158,14 @@ fn prediction_sum(predictions: &impl PointPredictions) -> f64 {
         .sum()
 }
 
-/// One subject at one support point through `predict_shared`.
+/// One subject at one support point through `predict`.
 pub fn bench_predict<E: Equation>(
     b: &mut Bencher,
     model: &E,
     subject: &Subject,
     theta: &Parameters,
 ) {
-    b.iter(|| {
-        black_box(
-            model
-                .predict_shared(black_box(subject), black_box(theta))
-                .unwrap(),
-        )
-    });
+    b.iter(|| black_box(model.predict(black_box(subject), black_box(theta)).unwrap()));
 }
 
 /// Every subject at every support point through `map_predictions`.

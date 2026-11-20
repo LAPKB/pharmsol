@@ -677,7 +677,7 @@ impl<M: SdeModel> Equation for SDE<M> {
 
     /// Free-running particle predictions: each particle follows its own path
     /// through every observation. Uncached.
-    fn predict_shared(
+    fn predict(
         &self,
         subject: &Subject,
         parameters: &[f64],

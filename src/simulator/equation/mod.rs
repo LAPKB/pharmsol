@@ -154,25 +154,14 @@ pub trait Equation: Clone + Send + Sync + 'static {
     /// Number of output equations.
     fn nouteqs(&self) -> usize;
 
-    /// Simulate a subject and return its predictions, shared.
+    /// Simulate a subject and return its predictions.
     ///
     /// [`ODE`] and [`Analytical`] hand out the cached predictions themselves
     /// (no copy on a cache hit), or wrap a fresh result when caching is
-    /// disabled. An [`SDE`] returns free-running particles, uncached.
-    fn predict_shared(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-    ) -> Result<Arc<Self::P>, PharmsolError>;
-
-    /// Simulate a subject and return its predictions.
-    ///
-    /// Results may be served from the equation's cache. An [`SDE`] returns
-    /// free-running particles.
-    fn predict(&self, subject: &Subject, parameters: &[f64]) -> Result<Self::P, PharmsolError> {
-        self.predict_shared(subject, parameters)
-            .map(Arc::unwrap_or_clone)
-    }
+    /// disabled. An [`SDE`] returns free-running particles, uncached. Use
+    /// [`Arc::unwrap_or_clone`] for an owned copy.
+    fn predict(&self, subject: &Subject, parameters: &[f64])
+        -> Result<Arc<Self::P>, PharmsolError>;
 }
 
 /// Hash parameter vectors to a u64 for cache key generation.

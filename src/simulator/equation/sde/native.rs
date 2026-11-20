@@ -166,6 +166,9 @@ impl SdeModel for NativeSde {
     }
 }
 
+// Low-level constructors that `sde!` expands to. Build models with the
+// macro; these stay public only so its expansion can reach them.
+#[doc(hidden)]
 impl SDE<NativeSde> {
     /// Build an SDE from handwritten functions, simulated with `nparticles`
     /// particles.
@@ -240,10 +243,5 @@ impl SDE<NativeSde> {
         }
         self.model_mut().bolus_destinations = mapped;
         self
-    }
-
-    /// The attached metadata, if any.
-    pub fn metadata(&self) -> Option<&ValidatedModelMetadata> {
-        self.model.metadata.as_ref()
     }
 }

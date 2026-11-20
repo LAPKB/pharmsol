@@ -64,8 +64,6 @@
 //!
 //! For metadata-backed models, use [`Parameters::with_model`] for one support
 //! point and [`ParameterOrder::with_model`] for repeated dense batches.
-//! Handwritten models without attached parameter metadata cannot validate
-//! named input.
 //!
 //! ## Choose A Workflow
 //!
@@ -407,9 +405,9 @@ pub mod prelude {
     pub use crate::analytical;
     #[doc(inline)]
     pub use crate::fa;
-    #[doc(inline)]
+    #[doc(hidden)]
     pub use crate::fetch_cov;
-    #[doc(inline)]
+    #[doc(hidden)]
     pub use crate::fetch_params;
     #[doc(inline)]
     pub use crate::lag;
@@ -419,6 +417,7 @@ pub mod prelude {
     pub use crate::sde;
 }
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! fetch_params {
     ($p:expr, $($name:ident),*) => {
@@ -433,6 +432,7 @@ macro_rules! fetch_params {
     };
 }
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! fetch_cov {
     ($cov:expr, $t:expr, $($name:ident),*) => {

@@ -55,6 +55,7 @@
 
 use std::borrow::Cow;
 use std::fmt;
+use std::sync::Arc;
 
 use thiserror::Error;
 
@@ -145,9 +146,9 @@ impl CompiledRuntimeModel {
 
     pub fn metadata(&self) -> &ValidatedModelMetadata {
         match self {
-            Self::Ode(model) => model.metadata(),
-            Self::Analytical(model) => model.metadata(),
-            Self::Sde(model) => model.metadata(),
+            Self::Ode(model) => model.model().validated_metadata(),
+            Self::Analytical(model) => model.model().validated_metadata(),
+            Self::Sde(model) => model.model().validated_metadata(),
         }
     }
 
@@ -157,11 +158,15 @@ impl CompiledRuntimeModel {
         parameters: &Parameters,
     ) -> Result<RuntimePredictions, RuntimeError> {
         Ok(match self {
-            Self::Ode(model) => RuntimePredictions::Subject(model.predict(subject, parameters)?),
-            Self::Analytical(model) => {
-                RuntimePredictions::Subject(model.predict(subject, parameters)?)
-            }
-            Self::Sde(model) => RuntimePredictions::Particles(model.predict(subject, parameters)?),
+            Self::Ode(model) => RuntimePredictions::Subject(Arc::unwrap_or_clone(
+                model.predict(subject, parameters)?,
+            )),
+            Self::Analytical(model) => RuntimePredictions::Subject(Arc::unwrap_or_clone(
+                model.predict(subject, parameters)?,
+            )),
+            Self::Sde(model) => RuntimePredictions::Particles(Arc::unwrap_or_clone(
+                model.predict(subject, parameters)?,
+            )),
         })
     }
 }

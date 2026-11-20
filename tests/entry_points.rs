@@ -2,7 +2,7 @@
 //! particle filter applies the same up-front label check on each of its entry
 //! points.
 //!
-//! `predict`, `predict_shared` and `map_predictions` must agree for every
+//! `predict` and `map_predictions` must agree for every
 //! backend. The SDE particle filter looks its observation model up by output
 //! label; a model for a label the equation does not declare is rejected
 //! before simulating, so a typo cannot silently drop an output.
@@ -68,9 +68,6 @@ fn assert_entry_points_agree(
             .all(|value| value.is_finite() && *value > 0.0),
         "{name}: {predicted:?}"
     );
-
-    let shared = prediction_values(equation.predict_shared(&subject, &parameters)?.as_ref());
-    assert_eq!(shared, predicted, "{name}: predict_shared");
 
     let mapped = map_predictions(equation, &data, &support_points, |_, predictions| {
         predictions.map(|predictions| prediction_values(predictions.as_ref()))
