@@ -1096,13 +1096,13 @@ fn time_varying_covariates_work_correctly() {
 }
 
 // =============================================================================
-// LIKELIHOOD TESTS
+// OBSERVED SUBJECTS
 // =============================================================================
 
 #[test]
-fn likelihood_calculation_matches_analytical() {
-    // Verify likelihood calculations are consistent
-    let subject = Subject::builder("likelihood")
+fn observed_subject_predictions_match_analytical() {
+    // A subject with measured values, not only missing observations.
+    let subject = Subject::builder("observed")
         .bolus(0.0, 100.0, "iv_bolus")
         .observation(1.0, 1.8, "cp") // Observed value
         .observation(2.0, 1.6, "cp")
@@ -1124,7 +1124,7 @@ fn likelihood_calculation_matches_analytical() {
         )
         .with_nstates(1)
         .with_nout(1),
-        "likelihood_calculation",
+        "observed_subject",
     );
 
     let ode = with_one_compartment_ode_metadata(
@@ -1143,42 +1143,15 @@ fn likelihood_calculation_matches_analytical() {
         )
         .with_nstates(1)
         .with_nout(1),
-        "likelihood_calculation",
+        "observed_subject",
     );
 
-    let error_models = AssayErrorModels::default()
-        .add(
-            "cp",
-            AssayErrorModel::additive(ErrorPoly::new(0.0, 0.1, 0.0, 0.0), 0.0),
-        )
-        .unwrap();
-
-    let analytical_params = parameters_for_analytical(
-        "likelihood_calculation",
+    assert_ode_matches_analytical(
+        "observed_subject",
         &analytical,
+        &ode,
+        &subject,
         &["ke", "v"],
         &[0.1, 50.0],
-    );
-    let ode_params = parameters_for_ode("likelihood_calculation", &ode, &["ke", "v"], &[0.1, 50.0]);
-
-    let ll_analytical = analytical
-        .log_likelihood(&subject, &analytical_params, &error_models)
-        .expect("analytical likelihood")
-        .exp();
-
-    let ll_ode = ode
-        .log_likelihood(&subject, &ode_params, &error_models)
-        .expect("ode likelihood")
-        .exp();
-
-    let ll_diff = (ll_analytical - ll_ode).abs();
-    let ll_rel_diff = ll_diff / ll_analytical.abs().max(1e-10);
-
-    assert!(
-        ll_rel_diff < 0.01, // Within 1%
-        "Likelihoods should match: analytical={:.6}, ode={:.6}, rel_diff={:.2e}",
-        ll_analytical,
-        ll_ode,
-        ll_rel_diff
     );
 }

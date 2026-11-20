@@ -1,17 +1,22 @@
-//! Every way of scoring a subject against assay error models applies the same
-//! up-front label check and gives the same likelihood.
+//! Every way of simulating a subject gives the same predictions, and the SDE
+//! particle filter applies the same up-front label check on each of its entry
+//! points.
 //!
-//! The simulator looks error models up by output label. An error model for a
-//! label the equation does not declare is rejected before simulating, on every
-//! entry point and for every backend, so a typo cannot silently drop an
-//! output's error model.
+//! `predict` and `map_predictions` must agree for every
+//! backend. The SDE particle filter looks its observation model up by output
+//! label; a model for a label the equation does not declare is rejected
+//! before simulating, so a typo cannot silently drop an output.
+
+#[path = "support/normal_observation.rs"]
+mod normal_observation;
 
 use approx::assert_relative_eq;
 use ndarray::Array2;
-use pharmsol::data::error_model::ErrorModelError;
-use pharmsol::prelude::simulator::log_likelihood_matrix;
+use normal_observation::NormalObservation;
+use pharmsol::prelude::simulator::map_predictions;
 use pharmsol::prelude::*;
-use pharmsol::Cache;
+use pharmsol::simulator::equation::sde::SdeModel;
+use pharmsol::{Cache, SDE};
 
 /// One-compartment IV model data: an infusion on `iv`, two `cp` observations.
 fn subject() -> Subject {
@@ -24,38 +29,27 @@ fn subject() -> Subject {
 
 const PARAMETERS: [(&str, f64); 2] = [("ke", 0.2), ("v", 20.0)];
 
-fn cp_error_models() -> AssayErrorModels {
-    AssayErrorModels::new()
-        .add(
-            "cp",
-            AssayErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 0.5),
-        )
-        .expect("cp error model")
-}
-
-fn undeclared_error_models() -> AssayErrorModels {
-    AssayErrorModels::new()
-        .add(
-            "concentration",
-            AssayErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 0.5),
-        )
-        .expect("concentration error model")
+fn prediction_values(predictions: &impl PointPredictions) -> Vec<f64> {
+    predictions
+        .point()
+        .iter()
+        .map(|prediction| prediction.prediction())
+        .collect()
 }
 
 fn assert_unknown_label<T: std::fmt::Debug>(
     entry_point: &str,
     result: Result<T, PharmsolError>,
-    label: &str,
+    expected: &str,
 ) {
     match result {
-        Err(PharmsolError::ErrorModelError(ErrorModelError::UnknownOutputLabel(found)))
-            if found == label => {}
-        other => panic!("{entry_point}: expected UnknownOutputLabel(`{label}`), got {other:?}"),
+        Err(PharmsolError::UnknownOutputLabel { label, .. }) if label == expected => {}
+        other => panic!("{entry_point}: expected UnknownOutputLabel(`{expected}`), got {other:?}"),
     }
 }
 
-/// Score the same subject through each public entry point and check that they
-/// agree, then check that each one rejects an undeclared label.
+/// Simulate the same subject through each public entry point and check that
+/// they agree.
 fn assert_entry_points_agree(
     name: &str,
     equation: &impl Equation,
@@ -65,41 +59,63 @@ fn assert_entry_points_agree(
     let data = Data::new(vec![subject.clone()]);
     let support_points =
         Array2::from_shape_vec((1, 2), parameters.as_slice().to_vec()).expect("one support point");
-    let error_models = cp_error_models();
 
-    let log_likelihood = equation.log_likelihood(&subject, &parameters, &error_models)?;
+    let predicted = prediction_values(&equation.predict(&subject, &parameters)?);
+    assert_eq!(predicted.len(), 2, "{name}: one prediction per observation");
+    assert!(
+        predicted
+            .iter()
+            .all(|value| value.is_finite() && *value > 0.0),
+        "{name}: {predicted:?}"
+    );
+
+    let mapped = map_predictions(equation, &data, &support_points, |_, predictions| {
+        predictions.map(|predictions| prediction_values(predictions.as_ref()))
+    })?;
+    assert_eq!(mapped.dim(), (1, 1));
+    let mapped = mapped[[0, 0]].as_ref().map_err(Clone::clone)?;
+    assert_eq!(mapped, &predicted, "{name}: map_predictions");
+    Ok(())
+}
+
+/// Score the same subject through each SDE filter entry point and check
+/// that they agree, then check that each one rejects an undeclared label.
+fn assert_filter_entry_points_agree<M: SdeModel>(
+    name: &str,
+    sde: &SDE<M>,
+    parameters: Parameters,
+) -> Result<(), PharmsolError> {
+    let subject = subject();
+    let observation_model = NormalObservation::new("cp", 0.5);
+
+    let log_likelihood = sde.log_likelihood(&subject, &parameters, &observation_model)?;
     assert!(log_likelihood.is_finite(), "{name}: {log_likelihood}");
 
-    let (_, likelihood) = equation.simulate(&subject, &parameters, Some(&error_models))?;
-    let likelihood = likelihood.expect("simulate scores when given error models");
-    assert_relative_eq!(likelihood.ln(), log_likelihood, max_relative = 1e-10);
+    let filtered = sde.filter(&subject, &parameters, &observation_model)?;
+    assert_relative_eq!(
+        filtered.log_likelihood,
+        log_likelihood,
+        max_relative = 1e-10
+    );
+    assert!(filtered.predictions.is_filtered());
 
-    let matrix = log_likelihood_matrix(equation, &data, &support_points, &error_models, false)?;
-    assert_relative_eq!(matrix[[0, 0]], log_likelihood, max_relative = 1e-10);
+    // Without diffusion every particle follows the free-running path, so the
+    // filter's estimate is the plain log-likelihood of the predictions.
+    let scored = observation_model.score(&sde.predict(&subject, &parameters)?)?;
+    assert_relative_eq!(scored, log_likelihood, max_relative = 1e-10);
 
-    let undeclared = undeclared_error_models();
+    let undeclared = NormalObservation::new("concentration", 0.5);
     assert_unknown_label(
         &format!("{name} log_likelihood"),
-        equation.log_likelihood(&subject, &parameters, &undeclared),
+        sde.log_likelihood(&subject, &parameters, &undeclared),
         "concentration",
     );
     assert_unknown_label(
-        &format!("{name} simulate"),
-        equation
-            .simulate(&subject, &parameters, Some(&undeclared))
-            .map(|(_, likelihood)| likelihood),
+        &format!("{name} filter"),
+        sde.filter(&subject, &parameters, &undeclared)
+            .map(|filtered| filtered.log_likelihood),
         "concentration",
     );
-    assert_unknown_label(
-        &format!("{name} log_likelihood_matrix"),
-        log_likelihood_matrix(equation, &data, &support_points, &undeclared, false),
-        "concentration",
-    );
-
-    // Predictions without error models are still available.
-    let (predictions, likelihood) = equation.simulate(&subject, &parameters, None)?;
-    assert!(likelihood.is_none());
-    drop(predictions);
     Ok(())
 }
 
@@ -173,62 +189,57 @@ fn one_cpt_sde() -> equation::SDE {
 }
 
 #[test]
-fn handwritten_ode_entry_points_agree_and_check_labels() -> Result<(), PharmsolError> {
-    {
-        let model = one_cpt_ode();
-        let parameters = Parameters::with_model(&model, PARAMETERS).expect("valid parameters");
-        assert_entry_points_agree("ODE", &model, parameters)
-    }
+fn handwritten_ode_entry_points_agree() -> Result<(), PharmsolError> {
+    let model = one_cpt_ode();
+    let parameters = Parameters::with_model(&model, PARAMETERS).expect("valid parameters");
+    assert_entry_points_agree("ODE", &model, parameters)
 }
 
 #[test]
-fn analytical_entry_points_agree_and_check_labels() -> Result<(), PharmsolError> {
-    {
-        let model = one_cpt_analytical();
-        let parameters = Parameters::with_model(&model, PARAMETERS).expect("valid parameters");
-        assert_entry_points_agree("Analytical", &model, parameters)
-    }
+fn analytical_entry_points_agree() -> Result<(), PharmsolError> {
+    let model = one_cpt_analytical();
+    let parameters = Parameters::with_model(&model, PARAMETERS).expect("valid parameters");
+    assert_entry_points_agree("Analytical", &model, parameters)
 }
 
 #[test]
 fn sde_entry_points_agree_and_check_labels() -> Result<(), PharmsolError> {
-    {
-        let model = one_cpt_sde();
-        let parameters = Parameters::with_model(&model, PARAMETERS).expect("valid parameters");
-        assert_entry_points_agree("SDE", &model, parameters)
-    }
+    let model = one_cpt_sde();
+    let parameters = Parameters::with_model(&model, PARAMETERS).expect("valid parameters");
+    assert_entry_points_agree("SDE", &model, parameters.clone())?;
+    assert_filter_entry_points_agree("SDE", &model, parameters)
 }
 
-/// The SDE likelihood cache keys on the error-model hash, so changing only an
-/// error polynomial must not be answered from the cache.
-fn assert_sde_cache_sees_polynomial_changes(
+/// The SDE likelihood cache keys on the observation model's cache key, so
+/// changing only the model must not be answered from the cache.
+fn assert_sde_cache_sees_observation_model_changes<M: SdeModel>(
     name: &str,
-    sde: &(impl Equation + Cache),
+    sde: &SDE<M>,
     parameters: Parameters,
 ) -> Result<(), PharmsolError> {
     let subject = subject();
-    let mut error_models = cp_error_models();
+    let observation_model = NormalObservation::new("cp", 0.5);
 
-    let first = sde.log_likelihood(&subject, &parameters, &error_models)?;
+    let first = sde.log_likelihood(&subject, &parameters, &observation_model)?;
     // The likelihood cache is on by default: a repeat call is a cache hit.
     assert_eq!(
-        sde.log_likelihood(&subject, &parameters, &error_models)?,
+        sde.log_likelihood(&subject, &parameters, &observation_model)?,
         first,
         "{name}: repeat call"
     );
 
-    // Change only the polynomial; gamma/lambda and its fixed state stay put.
-    error_models.set_errorpoly("cp", ErrorPoly::new(5.0, 0.0, 0.0, 0.0))?;
-    let after = sde.log_likelihood(&subject, &parameters, &error_models)?;
+    // Change only sigma.
+    let changed = observation_model.with_sigma(5.0);
+    let after = sde.log_likelihood(&subject, &parameters, &changed)?;
     assert!(
         (after - first).abs() > 1e-6,
-        "{name}: a polynomial-only change must not reuse the cached likelihood ({first} == {after})"
+        "{name}: a changed observation model must not reuse the cached likelihood ({first} == {after})"
     );
 
     // The cache only saves work: without it the likelihood is the same.
     let uncached = sde.clone().disable_cache();
     assert_eq!(
-        uncached.log_likelihood(&subject, &parameters, &error_models)?,
+        uncached.log_likelihood(&subject, &parameters, &changed)?,
         after,
         "{name}: cached and uncached likelihoods differ"
     );
@@ -236,20 +247,23 @@ fn assert_sde_cache_sees_polynomial_changes(
 }
 
 #[test]
-fn sde_likelihood_cache_sees_error_polynomial_changes() -> Result<(), PharmsolError> {
+fn sde_likelihood_cache_sees_observation_model_changes() -> Result<(), PharmsolError> {
     let model = one_cpt_sde();
     let parameters = Parameters::with_model(&model, PARAMETERS).expect("valid parameters");
-    assert_sde_cache_sees_polynomial_changes("SDE", &model, parameters)
+    assert_sde_cache_sees_observation_model_changes("SDE", &model, parameters)
 }
 
 /// A handwritten equation without metadata declares no output names. Its
 /// outputs are labeled by position number, and only labels for outputs the
-/// equation has are accepted.
+/// equation has are accepted by the particle filter.
 #[test]
 fn equations_without_metadata_accept_only_existing_output_numbers() -> Result<(), PharmsolError> {
-    let ode = equation::ODE::new(
-        |x, p, _t, dx, _b, rateiv, _cov| {
+    let sde = equation::SDE::new(
+        |x, p, _t, dx, rateiv, _cov| {
             dx[0] = rateiv[0] - p[0] * x[0];
+        },
+        |_p, sigma| {
+            sigma[0] = 0.0;
         },
         |_p, _t, _cov| lag! {},
         |_p, _t, _cov| fa! {},
@@ -257,6 +271,7 @@ fn equations_without_metadata_accept_only_existing_output_numbers() -> Result<()
         |x, p, _t, _cov, y| {
             y[0] = x[0] / p[1];
         },
+        16,
     )
     .with_nstates(1)
     .with_ndrugs(1)
@@ -266,19 +281,17 @@ fn equations_without_metadata_accept_only_existing_output_numbers() -> Result<()
         .observation(1.0, 4.0, 0)
         .build();
     let parameters = [0.2, 20.0];
-    let error_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 0.5);
 
-    let by_position = AssayErrorModels::new().add(0, error_model.clone())?;
-    assert!(ode
+    let by_position = NormalObservation::new(0, 0.5);
+    assert!(sde
         .log_likelihood(&subject, &parameters, &by_position)?
         .is_finite());
 
     // There is no second output, and an equation without metadata has no names.
     for label in ["1", "cp"] {
-        let error_models = AssayErrorModels::new().add(label, error_model.clone())?;
         assert_unknown_label(
             &format!("label `{label}`"),
-            ode.log_likelihood(&subject, &parameters, &error_models),
+            sde.log_likelihood(&subject, &parameters, &NormalObservation::new(label, 0.5)),
             label,
         );
     }
@@ -340,7 +353,7 @@ out(cp) = central / v ~ continuous()
 "#;
 
     #[test]
-    fn dsl_ode_entry_points_agree_and_check_labels() -> Result<(), PharmsolError> {
+    fn dsl_ode_entry_points_agree() -> Result<(), PharmsolError> {
         let CompiledRuntimeModel::Ode(model) = compile(ODE_SOURCE, "one_cpt_ode") else {
             panic!("expected an ODE model");
         };
@@ -349,7 +362,7 @@ out(cp) = central / v ~ continuous()
     }
 
     #[test]
-    fn dsl_analytical_entry_points_agree_and_check_labels() -> Result<(), PharmsolError> {
+    fn dsl_analytical_entry_points_agree() -> Result<(), PharmsolError> {
         let CompiledRuntimeModel::Analytical(model) =
             compile(ANALYTICAL_SOURCE, "one_cpt_analytical")
         else {
@@ -365,15 +378,16 @@ out(cp) = central / v ~ continuous()
             panic!("expected an SDE model");
         };
         let parameters = Parameters::with_model(&model, PARAMETERS).expect("valid parameters");
-        assert_entry_points_agree("DSL SDE", &model, parameters)
+        assert_entry_points_agree("DSL SDE", &model, parameters.clone())?;
+        assert_filter_entry_points_agree("DSL SDE", &model, parameters)
     }
 
     #[test]
-    fn dsl_sde_likelihood_cache_sees_error_polynomial_changes() -> Result<(), PharmsolError> {
+    fn dsl_sde_likelihood_cache_sees_observation_model_changes() -> Result<(), PharmsolError> {
         let CompiledRuntimeModel::Sde(model) = compile(SDE_SOURCE, "one_cpt_sde") else {
             panic!("expected an SDE model");
         };
         let parameters = Parameters::with_model(&model, PARAMETERS).expect("valid parameters");
-        assert_sde_cache_sees_polynomial_changes("DSL SDE", &model, parameters)
+        assert_sde_cache_sees_observation_model_changes("DSL SDE", &model, parameters)
     }
 }

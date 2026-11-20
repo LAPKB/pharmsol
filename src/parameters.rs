@@ -7,7 +7,7 @@ use crate::parameter_order::{ParameterOrderError, ParameterOrderPlan};
 
 #[cfg(feature = "dsl")]
 use crate::dsl::{CompiledRuntimeModel, RuntimeAnalyticalModel, RuntimeOdeModel, RuntimeSdeModel};
-use crate::{Analytical, ODE, SDE};
+use crate::{Analytical, Equation, ODE, SDE};
 
 /// Errors produced while validating named parameter input against model order.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]

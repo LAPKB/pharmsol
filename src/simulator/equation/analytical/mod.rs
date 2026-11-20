@@ -30,9 +30,8 @@ use super::model::{
     fill_active_rates, prepare_occasion, with_subject_context, InfusionDose, Model, Step,
 };
 use super::{salted_parameters_hash, Cache, Equation, ValidatedModelMetadata};
-use crate::data::error_model::AssayErrorModels;
-use crate::prelude::simulator::SubjectPredictions;
 use crate::simulator::cache::{PredictionCache, PredictionKey, DEFAULT_CACHE_SIZE};
+use crate::simulator::predictions::SubjectPredictions;
 use crate::simulator::{AnalyticalEq, T, V};
 use crate::{data::Covariates, Occasion, PharmsolError, Subject};
 
@@ -103,21 +102,6 @@ impl<M: AnalyticalModel> Analytical<M> {
 
     pub fn state_index(&self, name: &str) -> Option<usize> {
         self.model.metadata()?.state_index(name)
-    }
-
-    /// Predictions for a subject, from the cache when possible.
-    fn predictions(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-    ) -> Result<Arc<SubjectPredictions>, PharmsolError> {
-        let simulate = || self.solve(subject, parameters).map(Arc::new);
-        match &self.cache {
-            Some(cache) => {
-                cache.get_or_try_insert(self.prediction_key(subject, parameters), simulate)
-            }
-            None => simulate(),
-        }
     }
 
     pub(crate) fn prediction_key(&self, subject: &Subject, parameters: &[f64]) -> PredictionKey {
@@ -322,24 +306,19 @@ impl<M: AnalyticalModel> Equation for Analytical<M> {
         self.model.noutputs()
     }
 
+    /// Predictions from the cache when possible, without copying them.
     fn predict(
         &self,
         subject: &Subject,
         parameters: &[f64],
-    ) -> Result<SubjectPredictions, PharmsolError> {
-        self.predictions(subject, parameters)
-            .map(Arc::unwrap_or_clone)
-    }
-
-    fn log_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        self.validate_error_models(error_models)?;
-        self.predictions(subject, parameters)?
-            .log_likelihood(error_models)
+    ) -> Result<Arc<SubjectPredictions>, PharmsolError> {
+        let simulate = || self.solve(subject, parameters).map(Arc::new);
+        match &self.cache {
+            Some(cache) => {
+                cache.get_or_try_insert(self.prediction_key(subject, parameters), simulate)
+            }
+            None => simulate(),
+        }
     }
 }
 

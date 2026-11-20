@@ -21,8 +21,7 @@ use diffsol::{
 
 use crate::{
     data::Covariates,
-    error_model::AssayErrorModels,
-    prelude::simulator::SubjectPredictions,
+    simulator::predictions::SubjectPredictions,
     simulator::{M as Matrix, V},
     Occasion, PharmsolError, Subject,
 };
@@ -208,21 +207,6 @@ impl<M: OdeModel> ODE<M> {
 
     pub fn state_index(&self, name: &str) -> Option<usize> {
         self.model.metadata()?.state_index(name)
-    }
-
-    /// Predictions for a subject, from the cache when possible.
-    fn predictions(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-    ) -> Result<Arc<SubjectPredictions>, PharmsolError> {
-        let simulate = || self.solve(subject, parameters).map(Arc::new);
-        match &self.cache {
-            Some(cache) => {
-                cache.get_or_try_insert(self.prediction_key(subject, parameters), simulate)
-            }
-            None => simulate(),
-        }
     }
 
     pub(crate) fn prediction_key(&self, subject: &Subject, parameters: &[f64]) -> PredictionKey {
@@ -536,24 +520,19 @@ impl<M: OdeModel> Equation for ODE<M> {
         self.model.noutputs()
     }
 
+    /// Predictions from the cache when possible, without copying them.
     fn predict(
         &self,
         subject: &Subject,
         parameters: &[f64],
-    ) -> Result<SubjectPredictions, PharmsolError> {
-        self.predictions(subject, parameters)
-            .map(Arc::unwrap_or_clone)
-    }
-
-    fn log_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        self.validate_error_models(error_models)?;
-        self.predictions(subject, parameters)?
-            .log_likelihood(error_models)
+    ) -> Result<Arc<SubjectPredictions>, PharmsolError> {
+        let simulate = || self.solve(subject, parameters).map(Arc::new);
+        match &self.cache {
+            Some(cache) => {
+                cache.get_or_try_insert(self.prediction_key(subject, parameters), simulate)
+            }
+            None => simulate(),
+        }
     }
 }
 

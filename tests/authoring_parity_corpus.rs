@@ -8,8 +8,6 @@ use pharmsol::equation::{
     self, AnalyticalKernel, RouteKind as HandwrittenRouteKind, ValidatedModelMetadata,
 };
 use pharmsol::prelude::*;
-#[cfg(feature = "dsl")]
-use pharmsol::Predictions;
 use pharmsol_dsl::{
     analyze_model, compile_analyzed_model, parse_model, CovariateInterpolation, ExecutionModel,
     ModelKind, RouteKind as DslRouteKind,
@@ -950,12 +948,8 @@ fn assert_prediction_vectors_diverge(left: &[f64], right: &[f64], tolerance: f64
 }
 
 #[cfg(feature = "dsl")]
-fn particle_prediction_means(predictions: &ndarray::Array2<Prediction>) -> Vec<f64> {
-    predictions
-        .get_predictions()
-        .into_iter()
-        .map(|prediction| prediction.prediction())
-        .collect()
+fn particle_prediction_means(predictions: &ParticlePredictions) -> Vec<f64> {
+    predictions.mean()
 }
 
 fn macro_analytical_model() -> equation::Analytical {
