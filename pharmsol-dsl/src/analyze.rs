@@ -13,36 +13,25 @@ use crate::name_match::{
 use crate::syntax;
 use crate::{ModelKind, RouteKind, MAX_CONST_USIZE, RATE_FUNCTION_NAME};
 
+/// Identifiers that cannot name a symbol, besides the built-in function names,
+/// which `is_reserved_name` takes from `BuiltinFunction` so new functions are
+/// reserved automatically.
 const RESERVED_NAMES: &[&str] = &[
-    "abs",
     "bioavailability",
     "carry_forward",
-    "ceil",
     "ddt",
-    "exp",
-    "floor",
-    "estimate_effect_2",
-    "estimate_effect_3",
     "lag",
     "linear",
-    "ln",
     "locf",
-    "log",
-    "log10",
-    "log2",
-    "max",
-    "min",
     "noise",
-    "pow",
     RATE_FUNCTION_NAME,
-    "round",
-    "sin",
-    "cos",
-    "tan",
-    "sqrt",
     "t",
     "time",
 ];
+
+fn is_reserved_name(name: &str) -> bool {
+    RESERVED_NAMES.contains(&name) || BuiltinFunction::from_name(name).is_some()
+}
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct RoutePropertyDependencies {
@@ -1626,16 +1615,17 @@ impl<'a> Analyzer<'a> {
     fn analyze_call(
         &self,
         callee: &syntax::Ident,
-        args: &[syntax::Expr],
+        args: &[syntax::CallArg],
         span: Span,
         env: &BlockEnv,
     ) -> Result<AnalyzedExpr, AnalysisError> {
         if let [argument] = args {
-            if let Some(error) = input_outside_derivative_error(callee, argument) {
+            if let Some(error) = input_outside_derivative_error(callee, &argument.value) {
                 return Err(error);
             }
         }
         if callee.text == RATE_FUNCTION_NAME {
+            reject_named_arguments(callee, args)?;
             if args.len() != 1 {
                 return Err(AnalysisError::new(
                     format!(
@@ -1645,10 +1635,10 @@ impl<'a> Analyzer<'a> {
                     callee.span,
                 ));
             }
-            let syntax::ExprKind::Name(route_name) = &args[0].kind else {
+            let syntax::ExprKind::Name(route_name) = &args[0].value.kind else {
                 return Err(AnalysisError::new(
                     "`rate` expects a route identifier argument",
-                    args[0].span,
+                    args[0].value.span,
                 ));
             };
             let route = self
@@ -1677,42 +1667,7 @@ impl<'a> Analyzer<'a> {
             });
         }
 
-        if let Some(function) = UtilityFunctions::from_name(&callee.text) {
-            match function.argument_count() {
-                ArgumentCount::Exact(expected) if expected != args.len() => {
-                    return Err(AnalysisError::new(
-                        format!(
-                            "function `{}` expects {} argument(s), got {}",
-                            callee.text,
-                            expected,
-                            args.len()
-                        ),
-                        callee.span,
-                    ));
-                }
-                _ => {}
-            }
-
-            let mut typed_args = Vec::with_capacity(args.len());
-            for arg in args {
-                let analyzed = self.analyze_expr(arg, env)?;
-                self.expect_numeric(&analyzed, &format!("`{}` argument", callee.text), arg.span)?;
-                typed_args.push(analyzed);
-            }
-            return Ok(AnalyzedExpr {
-                kind: AnalyzedExprKind::Call {
-                    callee: AnalyzedCall::Pharmacometric(function),
-                    args: typed_args,
-                },
-                ty: ValueType::Real,
-                // Pharmacometric calls are deliberately runtime-only, even
-                // when every argument happens to be a literal.
-                constant: None,
-                span,
-            });
-        }
-
-        let intrinsic = MathFunction::from_name(&callee.text).ok_or_else(|| {
+        let function = BuiltinFunction::from_name(&callee.text).ok_or_else(|| {
             let error =
                 AnalysisError::new(format!("unknown function `{}`", callee.text), callee.span);
             match self.assist_for_unknown_function(callee) {
@@ -1720,37 +1675,55 @@ impl<'a> Analyzer<'a> {
                 None => error,
             }
         })?;
-        let expected_arity = intrinsic.argument_count();
-        match expected_arity {
-            ArgumentCount::Exact(expected) if expected != args.len() => {
-                return Err(AnalysisError::new(
-                    format!(
-                        "function `{}` expects {} argument(s), got {}",
-                        callee.text,
-                        expected,
-                        args.len()
-                    ),
-                    callee.span,
-                ))
+        let signature = function.signature();
+        let mut typed_args = Vec::with_capacity(signature.params.len());
+        let bound = bind_call_args(signature, callee, args)?;
+        for (arg, param) in bound.into_iter().zip(signature.params) {
+            typed_args.push(match arg {
+                BoundArg::Given(expr) => {
+                    let analyzed = self.analyze_expr(expr, env)?;
+                    match param.kind {
+                        ParamKind::Numeric => self.expect_numeric(
+                            &analyzed,
+                            &format!("`{}` argument", callee.text),
+                            expr.span,
+                        )?,
+                        ParamKind::Bool => self.expect_bool(
+                            &analyzed,
+                            &format!("`{}` argument `{}`", callee.text, param.name),
+                            expr.span,
+                        )?,
+                    }
+                    analyzed
+                }
+                BoundArg::Default(value) => {
+                    let constant = ConstValue::Real(value);
+                    AnalyzedExpr {
+                        kind: AnalyzedExprKind::Literal(constant.clone()),
+                        ty: ValueType::Real,
+                        constant: Some(constant),
+                        span: callee.span,
+                    }
+                }
+            });
+        }
+        let ty = call_result_type(signature, &typed_args);
+        let (callee, constant) = match function {
+            // Pharmacometric calls are deliberately runtime-only, even when
+            // every argument happens to be a literal.
+            BuiltinFunction::Utility(function) => (AnalyzedCall::Pharmacometric(function), None),
+            BuiltinFunction::Math(intrinsic) => {
+                let constant = typed_args
+                    .iter()
+                    .map(|arg| arg.constant.clone())
+                    .collect::<Option<Vec<_>>>()
+                    .and_then(|values| fold_call(intrinsic, &values));
+                (AnalyzedCall::Math(intrinsic), constant)
             }
-            _ => {}
-        }
-
-        let mut typed_args = Vec::with_capacity(args.len());
-        for arg in args {
-            let analyzed = self.analyze_expr(arg, env)?;
-            self.expect_numeric(&analyzed, &format!("`{}` argument", callee.text), arg.span)?;
-            typed_args.push(analyzed);
-        }
-        let ty = call_result_type(intrinsic, &typed_args);
-        let constant = typed_args
-            .iter()
-            .map(|arg| arg.constant.clone())
-            .collect::<Option<Vec<_>>>()
-            .and_then(|values| fold_call(intrinsic, &values));
+        };
         Ok(AnalyzedExpr {
             kind: AnalyzedExprKind::Call {
-                callee: AnalyzedCall::Math(intrinsic),
+                callee,
                 args: typed_args,
             },
             ty,
@@ -1948,21 +1921,14 @@ impl<'a> Analyzer<'a> {
                         callee.span,
                     ));
                 }
-                if let Some(function) = UtilityFunctions::from_name(&callee.text) {
-                    match function.argument_count() {
-                        ArgumentCount::Exact(expected) if expected != args.len() => {
-                            return Err(AnalysisError::new(
-                                format!(
-                                    "function `{}` expects {} argument(s), got {}",
-                                    callee.text,
-                                    expected,
-                                    args.len()
-                                ),
-                                callee.span,
-                            ));
-                        }
-                        _ => {}
-                    }
+                let function = BuiltinFunction::from_name(&callee.text).ok_or_else(|| {
+                    AnalysisError::new(
+                        format!("unknown compile-time function `{}`", callee.text),
+                        callee.span,
+                    )
+                })?;
+                let bound = bind_call_args(function.signature(), callee, args)?;
+                let BuiltinFunction::Math(intrinsic) = function else {
                     return Err(AnalysisError::new(
                         format!(
                             "`{}` is runtime-only and cannot appear in a compile-time expression",
@@ -1970,30 +1936,15 @@ impl<'a> Analyzer<'a> {
                         ),
                         callee.span,
                     ));
-                }
-                let intrinsic = MathFunction::from_name(&callee.text).ok_or_else(|| {
-                    AnalysisError::new(
-                        format!("unknown compile-time function `{}`", callee.text),
-                        callee.span,
-                    )
-                })?;
-                match intrinsic.argument_count() {
-                    ArgumentCount::Exact(expected) if expected != args.len() => {
-                        return Err(AnalysisError::new(
-                            format!(
-                                "function `{}` expects {} argument(s), got {}",
-                                callee.text,
-                                expected,
-                                args.len()
-                            ),
-                            callee.span,
-                        ));
-                    }
-                    _ => {}
-                }
-                let mut values = Vec::with_capacity(args.len());
-                for arg in args {
-                    values.push(self.evaluate_const_expr(arg, bindings, visiting)?);
+                };
+                let mut values = Vec::with_capacity(bound.len());
+                for arg in bound {
+                    values.push(match arg {
+                        BoundArg::Given(expr) => {
+                            self.evaluate_const_expr(expr, bindings, visiting)?
+                        }
+                        BoundArg::Default(value) => ConstValue::Real(value),
+                    });
                 }
                 fold_call(intrinsic, &values).ok_or_else(|| {
                     AnalysisError::new(
@@ -2016,7 +1967,7 @@ impl<'a> Analyzer<'a> {
         ty: PendingSymbolType,
         span: Span,
     ) -> Result<SymbolId, AnalysisError> {
-        if RESERVED_NAMES.contains(&name) {
+        if is_reserved_name(name) {
             return Err(AnalysisAssist::default()
                 .help(format!(
                     "rename `{name}` to a non-reserved identifier such as `{}_value`",
@@ -2362,7 +2313,7 @@ impl<'a> Analyzer<'a> {
         ));
         candidates.extend(UtilityFunctions::ALL.into_iter().map(|function| {
             let name = function.name();
-            let ArgumentCount::Exact(argument_count) = function.argument_count();
+            let argument_count = function.signature().params.len();
             SimilarNameCandidate::new(
                 name,
                 AnalysisAssist::default()
@@ -3042,27 +2993,16 @@ fn map_binary_op(op: syntax::BinaryOp) -> AnalyzedBinaryOp {
     }
 }
 
-fn call_result_type(intrinsic: MathFunction, args: &[AnalyzedExpr]) -> ValueType {
-    match intrinsic {
-        MathFunction::Abs => args.first().map_or(ValueType::Real, |arg| arg.ty),
-        MathFunction::Min | MathFunction::Max => args
+fn call_result_type(signature: &FunctionSignature, args: &[AnalyzedExpr]) -> ValueType {
+    match signature.returns {
+        ReturnType::Real => ValueType::Real,
+        ReturnType::PromotedArgs => args
             .iter()
-            .map(|arg| arg.ty)
+            .zip(signature.params)
+            .filter(|(_, param)| param.kind == ParamKind::Numeric)
+            .map(|(arg, _)| arg.ty)
             .reduce(promote_numeric)
             .unwrap_or(ValueType::Real),
-        MathFunction::Floor
-        | MathFunction::Ceil
-        | MathFunction::Exp
-        | MathFunction::Ln
-        | MathFunction::Log
-        | MathFunction::Log10
-        | MathFunction::Log2
-        | MathFunction::Pow
-        | MathFunction::Round
-        | MathFunction::Sin
-        | MathFunction::Cos
-        | MathFunction::Tan
-        | MathFunction::Sqrt => ValueType::Real,
     }
 }
 
@@ -3139,34 +3079,156 @@ fn fold_numeric(
 }
 
 fn fold_call(intrinsic: MathFunction, values: &[ConstValue]) -> Option<ConstValue> {
-    match intrinsic {
-        MathFunction::Abs => match values.first()? {
-            ConstValue::Int(value) => Some(ConstValue::Int(value.abs())),
-            ConstValue::Real(value) => Some(ConstValue::Real(value.abs())),
-            ConstValue::Bool(_) => None,
-        },
-        MathFunction::Ceil => Some(ConstValue::Real(values.first()?.as_f64()?.ceil())),
-        MathFunction::Exp => Some(ConstValue::Real(values.first()?.as_f64()?.exp())),
-        MathFunction::Floor => Some(ConstValue::Real(values.first()?.as_f64()?.floor())),
-        MathFunction::Ln | MathFunction::Log => {
-            Some(ConstValue::Real(values.first()?.as_f64()?.ln()))
+    match (intrinsic, values) {
+        (MathFunction::Abs, [ConstValue::Int(value)]) => {
+            return Some(match value.checked_abs() {
+                Some(value) => ConstValue::Int(value),
+                None => ConstValue::Real((*value as f64).abs()),
+            });
         }
-        MathFunction::Log10 => Some(ConstValue::Real(values.first()?.as_f64()?.log10())),
-        MathFunction::Log2 => Some(ConstValue::Real(values.first()?.as_f64()?.log2())),
-        MathFunction::Max => Some(ConstValue::Real(
-            values.first()?.as_f64()?.max(values.get(1)?.as_f64()?),
+        // Keep the chosen branch's type, so `ifelse` of two ints stays `int`.
+        (MathFunction::IfElse, [ConstValue::Bool(test), yes, no]) => {
+            let chosen = if *test { yes } else { no };
+            return if yes.value_type() == no.value_type() {
+                Some(chosen.clone())
+            } else {
+                chosen.as_f64().map(ConstValue::Real)
+            };
+        }
+        (MathFunction::IfElse, _) => return None,
+        _ => {}
+    }
+    let values = values
+        .iter()
+        .map(ConstValue::as_f64)
+        .collect::<Option<Vec<_>>>()?;
+    intrinsic.evaluate(&values).map(ConstValue::Real)
+}
+
+/// A call argument bound to its parameter slot.
+enum BoundArg<'a> {
+    Given(&'a syntax::Expr),
+    Default(f64),
+}
+
+/// Binds positional and named call arguments to the parameters of
+/// `signature`, filling omitted ones from their defaults.
+fn bind_call_args<'a>(
+    signature: &FunctionSignature,
+    callee: &syntax::Ident,
+    args: &'a [syntax::CallArg],
+) -> Result<Vec<BoundArg<'a>>, AnalysisError> {
+    let params = signature.params;
+    let positional = args.iter().take_while(|arg| arg.name.is_none()).count();
+    let any_named = positional < args.len();
+    let arity_error = |got: usize| {
+        let expected = match signature.argument_count() {
+            ArgumentCount::Exact(expected) => expected.to_string(),
+            ArgumentCount::Range { max, .. } => format!("at most {max}"),
+        };
+        AnalysisError::new(
+            format!(
+                "function `{}` expects {expected} argument(s), got {got}",
+                callee.text
+            ),
+            callee.span,
+        )
+    };
+    if positional > params.len() {
+        return Err(arity_error(positional));
+    }
+
+    let mut slots: Vec<Option<&syntax::Expr>> = vec![None; params.len()];
+    for (slot, arg) in slots.iter_mut().zip(&args[..positional]) {
+        *slot = Some(&arg.value);
+    }
+    for arg in &args[positional..] {
+        let Some(name) = &arg.name else {
+            return Err(AnalysisError::new(
+                "positional arguments must come before named arguments",
+                arg.value.span,
+            ));
+        };
+        let Some(index) = signature.param_index(&name.text) else {
+            let error = AnalysisError::new(
+                format!(
+                    "function `{}` has no parameter named `{}`",
+                    callee.text, name.text
+                ),
+                name.span,
+            );
+            let suggest = |param: &str| {
+                AnalysisAssist::default().replacement_suggestion(
+                    name.span,
+                    param,
+                    format!("did you mean `{param}`?"),
+                    Applicability::MaybeIncorrect,
+                )
+            };
+            let candidates = params
+                .iter()
+                .map(|param| SimilarNameCandidate::new(param.name, suggest(param.name)))
+                .collect();
+            // Parameter names are short, so also suggest the one parameter that
+            // prefixes or extends the given name, such as `h` for `hil`.
+            let assist = best_similar_name_assist(&name.text, candidates).or_else(|| {
+                let mut prefixed = params.iter().filter(|param| {
+                    name.text.starts_with(param.name) || param.name.starts_with(&name.text)
+                });
+                match (prefixed.next(), prefixed.next()) {
+                    (Some(param), None) => Some(suggest(param.name)),
+                    _ => None,
+                }
+            });
+            let error = match assist {
+                Some(assist) => assist.apply(error),
+                None => error,
+            };
+            return Err(error.with_help(signature.usage()));
+        };
+        if slots[index].is_some() {
+            return Err(AnalysisError::new(
+                format!("argument `{}` is given more than once", name.text),
+                name.span,
+            ));
+        }
+        slots[index] = Some(&arg.value);
+    }
+
+    slots
+        .into_iter()
+        .zip(params)
+        .map(|(slot, param)| match (slot, param.default) {
+            (Some(expr), _) => Ok(BoundArg::Given(expr)),
+            (None, Some(default)) => Ok(BoundArg::Default(default)),
+            (None, None)
+                if !any_named
+                    && signature.argument_count() == ArgumentCount::Exact(params.len()) =>
+            {
+                Err(arity_error(args.len()))
+            }
+            (None, None) => Err(AnalysisError::new(
+                format!(
+                    "function `{}` is missing argument `{}`",
+                    callee.text, param.name
+                ),
+                callee.span,
+            )
+            .with_help(signature.usage())),
+        })
+        .collect()
+}
+
+fn reject_named_arguments(
+    callee: &syntax::Ident,
+    args: &[syntax::CallArg],
+) -> Result<(), AnalysisError> {
+    match args.iter().find_map(|arg| arg.name.as_ref()) {
+        Some(name) => Err(AnalysisError::new(
+            format!("`{}` does not take named arguments", callee.text),
+            name.span,
         )),
-        MathFunction::Min => Some(ConstValue::Real(
-            values.first()?.as_f64()?.min(values.get(1)?.as_f64()?),
-        )),
-        MathFunction::Pow => Some(ConstValue::Real(
-            values.first()?.as_f64()?.powf(values.get(1)?.as_f64()?),
-        )),
-        MathFunction::Round => Some(ConstValue::Real(values.first()?.as_f64()?.round())),
-        MathFunction::Sin => Some(ConstValue::Real(values.first()?.as_f64()?.sin())),
-        MathFunction::Cos => Some(ConstValue::Real(values.first()?.as_f64()?.cos())),
-        MathFunction::Tan => Some(ConstValue::Real(values.first()?.as_f64()?.tan())),
-        MathFunction::Sqrt => Some(ConstValue::Real(values.first()?.as_f64()?.sqrt())),
+        None => Ok(()),
     }
 }
 
@@ -4706,5 +4768,264 @@ model constant_estimate_effect_3 {
         assert!(error
             .render(&case_source)
             .contains("unknown function `ESTIMATE_EFFECT_3`"));
+    }
+
+    #[test]
+    fn effect50_folds_constants_with_the_documented_defaults() {
+        let source = r#"
+model effect50_defaults {
+    kind ode
+    constants {
+        half = effect50(0, 1, 0.5, 1, 0.5)
+    }
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = effect50(0, 1, 0.5, 1, 0.5)
+    }
+}
+"#;
+        let model = crate::parse_model(source).expect("model parses");
+        let analyzed = analyze_model(&model).expect("effect50 model analyzes");
+        let AnalyzedStmtKind::Assign(output) = &analyzed.outputs_block.statements[0].kind else {
+            panic!("expected output assignment");
+        };
+        let AnalyzedExprKind::Call { callee, args } = &output.value.kind else {
+            panic!("expected effect50 call");
+        };
+        assert_eq!(callee, &AnalyzedCall::Math(MathFunction::Effect50));
+        assert_eq!(args.len(), 5);
+        assert_eq!(output.value.ty, ValueType::Real);
+        assert_eq!(output.value.constant, Some(ConstValue::Real(0.5)));
+    }
+
+    fn analyze_output(expr: &str) -> Result<AnalyzedExpr, String> {
+        let source = format!(
+            "name = calls\nkind = ode\nparams = p\nstates = central\ndx(central) = 0\nout(cp) = {expr}\n"
+        );
+        let model = crate::parse_model(&source).map_err(|error| error.render(&source))?;
+        let analyzed = analyze_model(&model).map_err(|error| error.render(&source))?;
+        let AnalyzedStmtKind::Assign(output) = &analyzed.outputs_block.statements[0].kind else {
+            panic!("expected output assignment");
+        };
+        Ok(output.value.clone())
+    }
+
+    fn output_error(expr: &str) -> String {
+        analyze_output(expr).expect_err("call must be rejected")
+    }
+
+    #[test]
+    fn effect50_binds_named_arguments_and_defaults() {
+        for (expr, expected) in [
+            ("effect50(x = 0.5)", 0.5),
+            ("effect50(x = -1e-12, h = 2.5, min = 3)", 3.0),
+            ("effect50(0, 1, 0.5, 1, 0.5)", 0.5),
+            ("effect50(2, 10, h = 2.5, x = 3, e50 = 3)", 6.0),
+            ("effect50(x = 0)", 0.0),
+            ("effect50(max = 4, x = 1e300)", 4.0),
+        ] {
+            let analyzed = analyze_output(expr).expect("effect50 call analyzes");
+            assert_eq!(
+                analyzed.constant,
+                Some(ConstValue::Real(expected)),
+                "{expr}"
+            );
+        }
+
+        let analyzed = analyze_output("effect50(x = central, e50 = p)").expect("analyzes");
+        assert!(analyzed.constant.is_none());
+        let AnalyzedExprKind::Call { callee, args } = &analyzed.kind else {
+            panic!("expected effect50 call");
+        };
+        assert_eq!(callee, &AnalyzedCall::Math(MathFunction::Effect50));
+        let constants = args
+            .iter()
+            .map(|arg| arg.constant.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            constants,
+            vec![
+                Some(ConstValue::Real(0.0)),
+                Some(ConstValue::Real(1.0)),
+                None,
+                Some(ConstValue::Real(1.0)),
+                None,
+            ]
+        );
+        assert!(matches!(args[2].kind, AnalyzedExprKind::Symbol(_)));
+        assert!(matches!(args[4].kind, AnalyzedExprKind::StateValue(_)));
+    }
+
+    #[test]
+    fn named_arguments_work_for_every_builtin_and_in_constants() {
+        let analyzed = analyze_output("pow(exponent = 3, base = 2)").expect("analyzes");
+        assert_eq!(analyzed.constant, Some(ConstValue::Real(8.0)));
+
+        let analyzed = analyze_output("max(b = 2, a = 7)").expect("analyzes");
+        assert_eq!(analyzed.ty, ValueType::Int);
+
+        let call_constants = |expr: &str| {
+            let AnalyzedExprKind::Call { callee, args } =
+                analyze_output(expr).expect("analyzes").kind
+            else {
+                panic!("expected call");
+            };
+            let constants = args.into_iter().map(|arg| arg.constant).collect::<Vec<_>>();
+            (callee, constants)
+        };
+        assert_eq!(
+            call_constants("estimate_effect_2(h2 = 2, h1 = 1, alpha = 0, v = 0, u = 1)"),
+            call_constants("estimate_effect_2(1, 0, 0, 1, 2)")
+        );
+
+        let source = r#"
+model named_constants {
+    kind ode
+    constants {
+        half = effect50(e50 = 2, x = 2)
+        eight = pow(2, exponent = 3)
+    }
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = half + eight
+    }
+}
+"#;
+        let model = crate::parse_model(source).expect("model parses");
+        let analyzed = analyze_model(&model).expect("named constants analyze");
+        let AnalyzedStmtKind::Assign(output) = &analyzed.outputs_block.statements[0].kind else {
+            panic!("expected output assignment");
+        };
+        assert_eq!(output.value.constant, Some(ConstValue::Real(8.5)));
+    }
+
+    #[test]
+    fn call_argument_errors_name_the_problem() {
+        let error = output_error("effect50(ec50 = 2)");
+        assert!(error.contains("function `effect50` has no parameter named `ec50`"));
+        assert!(error.contains("did you mean `e50`?"));
+        assert!(error.contains("`effect50` takes (min = 0, max = 1, e50 = 0.5, h = 1, x)"));
+
+        assert!(output_error("effect50(0.1, min = 0.2)")
+            .contains("argument `min` is given more than once"));
+        assert!(
+            output_error("effect50(x = 1, x = 2)").contains("argument `x` is given more than once")
+        );
+        assert!(output_error("effect50(1, 2, 3, 4, 5, 6)")
+            .contains("function `effect50` expects at most 5 argument(s), got 6"));
+        assert!(output_error("effect50(x = true)").contains("`effect50` argument must be numeric"));
+        assert!(output_error("effect50(e50 = 2, h = 3)")
+            .contains("function `effect50` is missing argument `x`"));
+        assert!(output_error("effect50()").contains("function `effect50` is missing argument `x`"));
+        assert!(output_error("exp()").contains("function `exp` expects 1 argument(s), got 0"));
+        assert!(
+            output_error("pow(base = 2)").contains("function `pow` is missing argument `exponent`")
+        );
+        assert!(output_error("estimate_effect_2(1, 2, 3, 4)")
+            .contains("function `estimate_effect_2` expects 5 argument(s), got 4"));
+        let error = output_error("effect50(x = 1, 0.5)");
+        assert!(error.contains("positional arguments must come before named arguments"));
+        assert!(error.contains("`effect50` takes (min = 0, max = 1, e50 = 0.5, h = 1, x)"));
+
+        assert!(output_error("effect50(hil = 2)").contains("did you mean `h`?"));
+        assert!(output_error("effect50(maximum = 2)").contains("did you mean `max`?"));
+        assert!(!output_error("effect50(m = 2)").contains("did you mean"));
+    }
+
+    #[test]
+    fn ifelse_checks_its_condition_and_keeps_branch_types() {
+        let analyzed = analyze_output("ifelse(central > 1, 2, 3)").expect("analyzes");
+        assert_eq!(analyzed.ty, ValueType::Int);
+        assert!(analyzed.constant.is_none());
+
+        assert_eq!(
+            analyze_output("ifelse(central > 1, central, 0)")
+                .expect("analyzes")
+                .ty,
+            ValueType::Real
+        );
+        assert_eq!(
+            analyze_output("ifelse(false, 2, 3)")
+                .expect("analyzes")
+                .constant,
+            Some(ConstValue::Int(3))
+        );
+        assert_eq!(
+            analyze_output("ifelse(test = 2 > 1, no = 3.5, yes = 2)")
+                .expect("analyzes")
+                .constant,
+            Some(ConstValue::Real(2.0))
+        );
+
+        assert!(
+            output_error("ifelse(1, 2, 3)").contains("`ifelse` argument `test` must be boolean")
+        );
+        assert!(
+            output_error("ifelse(true, false, 3)").contains("`ifelse` argument must be numeric")
+        );
+        assert!(output_error("ifelse(true, 2)")
+            .contains("function `ifelse` expects 3 argument(s), got 2"));
+    }
+
+    #[test]
+    fn sigmoid_logit_and_tanh_fold_constants() {
+        for (expr, expected) in [
+            ("sigmoid(0)", 0.5),
+            ("sigmoid(x = 2, k = 0)", 0.5),
+            ("logit(0.5)", 0.0),
+            ("tanh(0)", 0.0),
+            ("sigmoid(1e6)", 1.0),
+            ("sigmoid(-1e6)", 0.0),
+        ] {
+            assert_eq!(
+                analyze_output(expr).expect("analyzes").constant,
+                Some(ConstValue::Real(expected)),
+                "{expr}"
+            );
+        }
+        let Some(ConstValue::Real(round_trip)) = analyze_output("logit(sigmoid(1.3))")
+            .expect("analyzes")
+            .constant
+        else {
+            panic!("expected a real constant");
+        };
+        assert!((round_trip - 1.3).abs() < 1e-12);
+    }
+
+    #[test]
+    fn rate_rejects_named_arguments() {
+        let source = "name = named_rate\nkind = ode\nstates = central\ndx(central) = infusion(iv)\nout(cp) = rate(route = iv)\n";
+        let model = crate::parse_model(source).expect("model syntax is valid");
+        let error = analyze_model(&model).expect_err("named `rate` argument must fail");
+        assert!(error
+            .render(source)
+            .contains("`rate` does not take named arguments"));
+    }
+
+    #[test]
+    fn effect50_name_is_reserved() {
+        let source = "name = reserved_effect50\nkind = ode\nparams = effect50\nstates = central\ndx(central) = 0\nout(cp) = central\n";
+        let model = crate::parse_model(source).expect("model syntax is valid");
+        let error = analyze_model(&model).expect_err("`effect50` is a reserved name");
+        assert!(error
+            .render(source)
+            .contains("`effect50` is reserved by the DSL and cannot be used as a symbol name"));
+    }
+
+    #[test]
+    fn every_builtin_function_name_is_reserved() {
+        for name in MathFunction::ALL
+            .iter()
+            .map(|function| function.name())
+            .chain(UtilityFunctions::ALL.iter().map(|function| function.name()))
+        {
+            assert!(is_reserved_name(name), "`{name}` must be reserved");
+        }
     }
 }
