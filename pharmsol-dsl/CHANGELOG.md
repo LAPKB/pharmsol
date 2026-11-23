@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.29.4...pharmsol-dsl-v0.30.0) - 2026-11-23
+
+### Added
+
+- *(dsl)* [**breaking**] add effect50 and other built-ins, with named/default call arguments ([#407](https://github.com/LAPKB/pharmsol/pull/407))
+- *(dsl)* [**breaking**] tighten the authoring DSL ([#394](https://github.com/LAPKB/pharmsol/pull/394))
+- Remove label prefixes ([#383](https://github.com/LAPKB/pharmsol/pull/383))
+
 ## [0.29.3](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.29.2...pharmsol-dsl-v0.29.3) - 2026-09-15
 
 ### Fixed
