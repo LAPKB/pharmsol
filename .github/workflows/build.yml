@@ -28,8 +28,8 @@ jobs:
         include:
           - name: ubuntu-latest / stable
             os: ubuntu-latest
-          - name: macos-14 / stable
-            os: macos-14
+          - name: macos-latest / stable
+            os: macos-latest
           - name: windows-latest / stable
             os: windows-latest
     steps:
