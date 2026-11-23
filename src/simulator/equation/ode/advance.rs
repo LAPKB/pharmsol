@@ -403,6 +403,22 @@ where
     shift_solver_coordinate::<F, S>(solver, absolute_time, target_time, dy_scratch)
 }
 
+/// Whether diffsol would treat `stop_time` as already reached from
+/// `state_time` with step `step`. This mirrors the roundoff test in diffsol's
+/// `handle_tstop` (BDF and Runge-Kutta): `|t - tstop| <= 100 ε (|t| + |h|)`.
+///
+/// Since diffsol 0.19, `set_stop_time` answers such a stop by snapping the
+/// state time onto it, which would relabel model time across the gap and skip
+/// any dynamics in it (for example a whole ULP-short infusion at a large
+/// time). The caller treats the stop as `StopTimeAtCurrentTime` instead,
+/// leaving the state untouched, so the gap is rebased and integrated. The
+/// rebase leaves local `t = 0` and `h <= gap`, so the rebased stop lies
+/// outside this tolerance.
+fn diffsol_would_snap_stop(state_time: f64, step: f64, stop_time: f64) -> bool {
+    let troundoff = 100.0 * f64::EPSILON * (state_time.abs() + step.abs());
+    (stop_time - state_time).abs() <= troundoff
+}
+
 fn ensure_no_material_infusion_is_skipped<'a, F, S>(
     solver: &S,
     start_time: f64,
@@ -777,7 +793,15 @@ where
                         "ODE event coordinate conversion is not finite: current local t = {state_time:?}, absolute stop = {absolute_stop_time:?}, local stop = {stop_time:?}, gap = {local_gap:?}"
                     )));
                 }
-                match solver.set_stop_time(stop_time) {
+                let set_stop_result =
+                    if diffsol_would_snap_stop(state_time, solver.state().h, stop_time) {
+                        Err(diffsol::error::DiffsolError::OdeSolverError(
+                            OdeSolverError::StopTimeAtCurrentTime,
+                        ))
+                    } else {
+                        solver.set_stop_time(stop_time)
+                    };
+                match set_stop_result {
                     Ok(()) => {
                         if *pending_reinit {
                             reinitialize_at_boundary(solver, dy_scratch);

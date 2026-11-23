@@ -682,8 +682,11 @@ fn ode_infusions_long_horizon_boundary_failures_do_not_accumulate() {
     // Exact finite-f64 reproduction of debug/dat.csv subject `1`: 103
     // short infusions and 42 observations (with duplicates). Without
     // boundary restarts, individually recovered Newton failures accumulate
-    // past diffsol's 50-failure limit. `build()` orders events by time, so
-    // the two tables reproduce the interleaved source schedule exactly.
+    // past diffsol's 50-failure limit. The occasion also takes more than
+    // diffsol's default 5000-step budget per solver (enforced since diffsol
+    // 0.19), so this also checks that pharmsol lifts that cap. `build()`
+    // orders events by time, so the two tables reproduce the interleaved
+    // source schedule exactly.
     const INFUSION_DURATION: f64 = 0.00125;
     const INFUSIONS: [(f64, f64); 103] = [
         (0.0, 1e+09),

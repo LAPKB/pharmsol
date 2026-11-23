@@ -297,7 +297,7 @@ impl<M: OdeModel> ODE<M> {
             }
         };
 
-        let problem = OdeBuilder::<Matrix>::new()
+        let mut problem = OdeBuilder::<Matrix>::new()
             .atol(vec![self.atol])
             .rtol(self.rtol)
             .t0(0.0)
@@ -313,6 +313,12 @@ impl<M: OdeModel> ODE<M> {
                 x0,
                 time_origin,
             )?)?;
+        // diffsol (>= 0.19) caps the cumulative steps of one solver instance at
+        // `max_number_timesteps` (default 5000). One instance integrates a whole
+        // occasion, so long multi-dose horizons exceed that in normal work. Step
+        // budgets are pharmsol's: TSIT45 has its own guard below, and the
+        // implicit methods are deliberately unlimited.
+        problem.ode_options.max_number_timesteps = usize::MAX;
         problem
             .eqn
             .configure_explicit_step_guard(accepted_step_limits_for_solver(&self.solver));
