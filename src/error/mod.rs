@@ -156,6 +156,12 @@ fn describe_diffsol_error(
                 "error test failed {num_failures} times at t = {time:.4}{toward}; \
                  tolerances may be too tight or the parameters implausible."
             ),
+            OdeSolverError::TooManyTimesteps { time, num_steps } => format!(
+                "reached the limit of {num_steps} solver steps for one occasion at t = {time:.4}{toward}; \
+                 the dynamics may be discontinuous (e.g. sign, abs or a threshold in the equations) \
+                 or the parameters implausible. For a very long occasion at tight tolerances, \
+                 raise the limit with `ODE::with_max_steps`."
+            ),
             OdeSolverError::StopTimeBeforeCurrentTime {
                 stop_time,
                 state_time,
@@ -193,5 +199,31 @@ fn describe_diffsol_error(
             Some(_) => format!("solver error{toward}: {other}"),
             None => other.to_string(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use diffsol::error::{DiffsolError, OdeSolverError};
+
+    #[test]
+    fn step_cap_error_names_the_limit_and_likely_cause() {
+        let error = PharmsolError::from_solver_error(
+            DiffsolError::OdeSolverError(OdeSolverError::TooManyTimesteps {
+                time: 110.34,
+                num_steps: 10_000_000,
+            }),
+            120.0,
+        );
+        let message = error.to_string();
+        assert!(
+            message.contains("limit of 10000000 solver steps"),
+            "{message}"
+        );
+        assert!(message.contains("t = 110.3400"), "{message}");
+        assert!(message.contains("toward t = 120.0000"), "{message}");
+        assert!(message.contains("discontinuous"), "{message}");
+        assert!(message.contains("with_max_steps"), "{message}");
     }
 }

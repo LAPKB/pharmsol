@@ -46,10 +46,12 @@ pub(crate) const DEFAULT_TSIT45_MAX_ACCEPTED_STEPS_PER_SEGMENT: usize = 500_000;
 /// Minimum dimensionless fraction of the original exact segment gap that an
 /// accepted-step window must cover before the same segment may continue.
 const MIN_TSIT45_PROGRESS_FRACTION_PER_WINDOW: f64 = 1e-4;
-/// Default cumulative dimensionless TSIT45 accepted-step limit for one
-/// `PMProblem` (one subject occasion). Calibrated against long Pmetrics/PMcore
-/// runs; hitting it indicates a stalled trajectory, not normal work.
-pub(crate) const DEFAULT_TSIT45_MAX_ACCEPTED_STEPS_PER_SESSION: usize = 10_000_000;
+/// Default limit on accepted solver steps for one subject occasion, for every
+/// solver; override it with [`ODE::with_max_steps`]. At the default
+/// tolerances, ten years of daily dosing takes at most about 310k steps; at
+/// rtol = atol = 1e-8 it takes about 6.6M (TRBDF2). A stalled or chattering
+/// trajectory reaches the limit in a few seconds instead of running unbounded.
+pub const DEFAULT_MAX_STEPS_PER_OCCASION: usize = 10_000_000;
 
 /// Accepted-step limits configured once for one `PMProblem`/occasion.
 ///
@@ -65,19 +67,39 @@ pub(crate) struct ExplicitStepBudgetConfig {
 
 /// Return the accepted-step budgets selected for one solver session.
 ///
-/// Only TSIT45 uses the explicit work guard. The implicit methods retain their
-/// ordinary diffsol failure semantics and are never limited by either budget.
+/// Only TSIT45 uses the explicit work guard, with `max_steps` as its session
+/// budget. The implicit methods are never limited by either budget; diffsol's
+/// `max_number_timesteps` bounds them instead (see
+/// [`max_number_timesteps_for_solver`]).
 pub(crate) fn accepted_step_limits_for_solver(
     solver: &OdeSolver,
+    max_steps: usize,
 ) -> Option<ExplicitStepBudgetConfig> {
     match solver {
         OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45) => Some(ExplicitStepBudgetConfig {
             max_accepted_steps_per_segment: DEFAULT_TSIT45_MAX_ACCEPTED_STEPS_PER_SEGMENT,
-            max_accepted_steps_per_session: DEFAULT_TSIT45_MAX_ACCEPTED_STEPS_PER_SESSION,
+            max_accepted_steps_per_session: max_steps,
         }),
         OdeSolver::Bdf
         | OdeSolver::Sdirk(SdirkTableau::TrBdf2)
         | OdeSolver::Sdirk(SdirkTableau::Esdirk34) => None,
+    }
+}
+
+/// Return diffsol's `max_number_timesteps` for one solver session.
+///
+/// diffsol (>= 0.19) caps the accepted steps of one solver instance at this
+/// value (default 5000). One instance integrates a whole occasion, and long
+/// multi-dose occasions exceed 5000 in normal work. The implicit methods get
+/// `max_steps`. TSIT45 enforces `max_steps` through pharmsol's own step guard,
+/// so diffsol's cap is lifted to keep it from pre-empting that guard's
+/// diagnostics.
+pub(crate) fn max_number_timesteps_for_solver(solver: &OdeSolver, max_steps: usize) -> usize {
+    match solver {
+        OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45) => usize::MAX,
+        OdeSolver::Bdf
+        | OdeSolver::Sdirk(SdirkTableau::TrBdf2)
+        | OdeSolver::Sdirk(SdirkTableau::Esdirk34) => max_steps,
     }
 }
 
@@ -151,6 +173,7 @@ pub struct ODE<M = NativeOde> {
     solver: OdeSolver,
     rtol: f64,
     atol: f64,
+    max_steps: usize,
     cache: Option<PredictionCache>,
 }
 
@@ -162,6 +185,7 @@ impl<M: OdeModel> ODE<M> {
             solver: OdeSolver::default(),
             rtol: RTOL,
             atol: ATOL,
+            max_steps: DEFAULT_MAX_STEPS_PER_OCCASION,
             cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
         }
     }
@@ -195,6 +219,18 @@ impl<M: OdeModel> ODE<M> {
     pub fn with_tolerances(mut self, rtol: f64, atol: f64) -> Self {
         self.rtol = rtol;
         self.atol = atol;
+        self
+    }
+
+    /// Set the maximum number of accepted solver steps for one subject
+    /// occasion. The default is [`DEFAULT_MAX_STEPS_PER_OCCASION`].
+    ///
+    /// The limit stops a stalled or chattering trajectory, for example from
+    /// a discontinuous right-hand side, from running unbounded. Raise it for
+    /// very long occasions solved at tight tolerances. A run that finishes
+    /// gives the same predictions whatever the limit.
+    pub fn with_max_steps(mut self, max_steps: usize) -> Self {
+        self.max_steps = max_steps;
         self
     }
 
@@ -313,15 +349,14 @@ impl<M: OdeModel> ODE<M> {
                 x0,
                 time_origin,
             )?)?;
-        // diffsol (>= 0.19) caps the cumulative steps of one solver instance at
-        // `max_number_timesteps` (default 5000). One instance integrates a whole
-        // occasion, so long multi-dose horizons exceed that in normal work. Step
-        // budgets are pharmsol's: TSIT45 has its own guard below, and the
-        // implicit methods are deliberately unlimited.
-        problem.ode_options.max_number_timesteps = usize::MAX;
+        problem.ode_options.max_number_timesteps =
+            max_number_timesteps_for_solver(&self.solver, self.max_steps);
         problem
             .eqn
-            .configure_explicit_step_guard(accepted_step_limits_for_solver(&self.solver));
+            .configure_explicit_step_guard(accepted_step_limits_for_solver(
+                &self.solver,
+                self.max_steps,
+            ));
 
         let run = OccasionRun {
             steps: &schedule.steps,
