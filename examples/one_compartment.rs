@@ -1,8 +1,8 @@
 //! Compares analytical and ODE solutions for a one-compartment IV model.
 //!
 //! Both the `analytical!` and `ode!` macros define the same model. Predictions
-//! and log-likelihoods are computed with each and printed side by side to
-//! confirm they match.
+//! and their squared errors against the observations are computed with each
+//! and printed side by side to confirm they match.
 
 fn main() -> Result<(), pharmsol::PharmsolError> {
     use pharmsol::{prelude::*, Parameters};
@@ -48,13 +48,6 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
         .missing_observation(12.0, "cp")
         .build();
 
-    // Define the assay error models once by label and reuse them across both
-    // equations.
-    let ems = AssayErrorModels::new().add(
-        "cp",
-        AssayErrorModel::additive(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.0),
-    )?;
-
     // Define the parameter values for the simulations
     let ke = 1.022; // Elimination rate constant
     let v = 194.0; // Volume of distribution
@@ -63,25 +56,23 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
     let ode_parameters =
         Parameters::with_model(&ode, [("ke", ke), ("v", v)]).expect("valid named parameters");
 
-    // Compute likelihoods and predictions for both models
-    let analytical_likelihoods =
-        analytical.log_likelihood(&subject, &analytical_parameters, &ems)?;
-
+    // Compute predictions for both models, and their sum of squared errors
+    // against the observed values
     let analytical_predictions = analytical.predict(&subject, &analytical_parameters)?;
-
-    let ode_likelihoods = ode.log_likelihood(&subject, &ode_parameters, &ems)?;
+    let analytical_squared_error = analytical_predictions.squared_error();
 
     let ode_predictions = ode.predict(&subject, &ode_parameters)?;
+    let ode_squared_error = ode_predictions.squared_error();
 
     // Print comparison table
     println!("\n┌───────────┬─────────────────┬─────────────────┬─────────────────────┐");
     println!("│           │   Analytical    │       ODE       │     Difference      │");
     println!("├───────────┼─────────────────┼─────────────────┼─────────────────────┤");
     println!(
-        "│ Log-Likeli│ {:>15.6} │ {:>15.6} │ {:>19.2e} │",
-        analytical_likelihoods,
-        ode_likelihoods,
-        analytical_likelihoods - ode_likelihoods
+        "│ Sq. error │ {:>15.6} │ {:>15.6} │ {:>19.2e} │",
+        analytical_squared_error,
+        ode_squared_error,
+        analytical_squared_error - ode_squared_error
     );
     println!("├───────────┼─────────────────┼─────────────────┼─────────────────────┤");
     println!("│   Time    │   Prediction    │   Prediction    │                     │");

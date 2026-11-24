@@ -1,6 +1,6 @@
 pub mod cache;
 pub mod equation;
-pub(crate) mod likelihood;
+pub mod predictions;
 use diffsol::{NalgebraMat, NalgebraVec};
 
 use crate::data::Covariates;

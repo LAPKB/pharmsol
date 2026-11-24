@@ -24,13 +24,14 @@
 //! - [`Event`], [`Bolus`], [`Infusion`], and [`Observation`] for explicit
 //!   event-level control.
 //! - [`Covariate`] and [`Covariates`] for time-varying subject characteristics.
-//! - [`ErrorModel`], [`ResidualErrorModel`], and [`ObservationError`] for the
-//!   different error surfaces used by downstream workflows.
+//! - [`ErrorPoly`] for an observation's own assay error polynomial, carried
+//!   as data from the input to the predictions.
+//! - [`ObservationError`] for invalid observation data.
 //!
 //! # Choose A Data Input Path
 //!
 //! - Use `Subject::builder` when you are authoring a schedule directly in Rust.
-//! - Use [`row::DataRow`] and [`row::DataRowBuilder`] for the existing
+//! - Use [`parser::DataRow`] and [`parser::DataRowBuilder`] for the existing
 //!   Pmetrics-shaped row ingestion API.
 //! - Use [`parser::read_pmetrics`] when you are loading a Pmetrics-style file
 //!   from disk.
@@ -52,16 +53,13 @@
 //! [`Occasion`] indices are different: they are integer period markers used to
 //! separate repeated dosing blocks within one subject.
 //!
-//! # Error Surfaces
+//! # Observation Errors
 //!
-//! This module exposes three related but different error families:
-//!
-//! - [`ErrorModel`] for assay or measurement error driven by the observation
-//!   value, commonly used in non-parametric workflows.
-//! - [`ResidualErrorModel`] for residual unexplained variability driven by the
-//!   prediction value, commonly used in parametric workflows.
-//! - [`ObservationError`] for invalid or insufficient observation data during
-//!   profile construction and related preprocessing.
+//! pharmsol does not score observations against predictions; error models
+//! and likelihoods live in downstream crates. An observation may still carry
+//! its own [`ErrorPoly`], which is passed through to its prediction
+//! unchanged. [`ObservationError`] reports invalid or insufficient
+//! observation data during profile construction and related preprocessing.
 //!
 //! # Example
 //!
@@ -83,16 +81,15 @@
 pub mod auc;
 pub mod builder;
 pub mod covariate;
-pub mod error_model;
+pub mod error_poly;
 pub mod event;
 pub mod observation_error;
 pub mod parser;
-pub mod residual_error;
+pub(crate) mod stable_hash;
 pub mod structs;
 pub use crate::nca::{MetricsError, ObservationMetrics};
 pub use covariate::*;
-pub use error_model::*;
+pub use error_poly::ErrorPoly;
 pub use event::*;
 pub use observation_error::ObservationError;
-pub use residual_error::*;
 pub use structs::{Data, Occasion, Subject};

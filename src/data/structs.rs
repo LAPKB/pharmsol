@@ -542,7 +542,7 @@ impl Subject {
 
     fn compute_hash(&self) -> u64 {
         use std::hash::{Hash, Hasher};
-        let mut hasher = ahash::AHasher::default();
+        let mut hasher = crate::data::stable_hash::StableHasher::default();
         self.id.hash(&mut hasher);
         for occasion in &self.occasions {
             occasion.index.hash(&mut hasher);
@@ -566,8 +566,8 @@ impl Subject {
                         obs.time().to_bits().hash(&mut hasher);
                         obs.value().map(f64::to_bits).hash(&mut hasher);
                         obs.outeq().hash(&mut hasher);
-                        // Cached predictions carry these, and the likelihood
-                        // reads them back.
+                        // Cached predictions carry these, and downstream
+                        // scoring reads them back.
                         (obs.censoring() as u8).hash(&mut hasher);
                         obs.errorpoly()
                             .map(|poly| {
@@ -1751,6 +1751,20 @@ mod tests {
             .observation(1.0, 5.0, 0)
             .build();
         assert_eq!(s.hash(), s.hash());
+    }
+
+    /// The hash seeds the SDE random streams, so it must be the same in every
+    /// process and on every platform. A change here changes every seeded SDE
+    /// result.
+    #[test]
+    fn hash_is_fixed_across_processes() {
+        let s = Subject::builder("s1")
+            .bolus(0.0, 100.0, 0)
+            .infusion(1.0, 50.0, 0, 0.5)
+            .covariate("wt", 0.0, 70.0)
+            .observation(1.0, 5.0, 0)
+            .build();
+        assert_eq!(s.hash(), 5401581628709380980);
     }
 
     #[test]

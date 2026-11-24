@@ -174,6 +174,9 @@ impl OdeModel for NativeOde {
     }
 }
 
+// Low-level constructors that `ode!` expands to. Build models with the
+// macro; these stay public only so its expansion can reach them.
+#[doc(hidden)]
 impl ODE<NativeOde> {
     /// Build an ODE from handwritten functions.
     ///
@@ -220,10 +223,5 @@ impl ODE<NativeOde> {
         check_dimensions(&metadata, neqs.nstates, neqs.ndrugs, neqs.nout)?;
         self.model_mut().metadata = Some(metadata);
         Ok(self)
-    }
-
-    /// The attached metadata, if any.
-    pub fn metadata(&self) -> Option<&ValidatedModelMetadata> {
-        self.model.metadata.as_ref()
     }
 }

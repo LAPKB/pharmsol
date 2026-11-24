@@ -103,9 +103,8 @@ fn run_infusions(subject: &Subject, solver: OdeSolver) -> Vec<f64> {
     .expect("metadata should validate");
 
     let predictions = ode
-        .simulate(subject, &crate::parameters::dense([]), None)
-        .expect("infusion simulation should succeed")
-        .0;
+        .predict(subject, &crate::parameters::dense([]))
+        .expect("infusion simulation should succeed");
 
     predictions
         .predictions()
@@ -213,9 +212,8 @@ fn handwritten_ode_defaults_to_explicit_route_vectors() {
     .expect("metadata attachment should validate");
 
     let predictions = ode
-        .simulate(&route_policy_subject(), &crate::parameters::dense([]), None)
-        .expect("simulation should succeed")
-        .0;
+        .predict(&route_policy_subject(), &crate::parameters::dense([]))
+        .expect("simulation should succeed");
     let metadata = ode.metadata().expect("metadata exists");
 
     assert_eq!(
@@ -261,9 +259,8 @@ fn handwritten_ode_metadata_input_policy_is_descriptive_only() {
     .expect("metadata attachment should validate");
 
     let predictions = ode
-        .simulate(&route_policy_subject(), &crate::parameters::dense([]), None)
-        .expect("simulation should succeed")
-        .0;
+        .predict(&route_policy_subject(), &crate::parameters::dense([]))
+        .expect("simulation should succeed");
 
     assert_relative_eq!(
         predictions.predictions()[0].prediction(),
@@ -297,9 +294,8 @@ fn handwritten_ode_metadata_resolves_numeric_labels_by_exact_name() {
         .observation(1.0, 0.0, "1")
         .build();
     let prediction = ode
-        .simulate(&numeric, &crate::parameters::dense([]), None)
+        .predict(&numeric, &crate::parameters::dense([]))
         .expect("numeric labels should resolve by exact name")
-        .0
         .predictions()[0]
         .prediction();
     assert!(prediction > 0.0);
@@ -316,7 +312,7 @@ fn handwritten_ode_metadata_resolves_numeric_labels_by_exact_name() {
             .build(),
     ] {
         assert!(ode
-            .simulate(&prefixed, &crate::parameters::dense([]), None)
+            .predict(&prefixed, &crate::parameters::dense([]))
             .is_err());
     }
 }
@@ -530,9 +526,8 @@ fn ode_infusions_accepted_stop_before_event_keeps_integrating() {
     .expect("metadata should validate");
 
     let predictions = ode
-        .simulate(&subject, &crate::parameters::dense([]), None)
-        .expect("infusion simulation should succeed")
-        .0;
+        .predict(&subject, &crate::parameters::dense([]))
+        .expect("infusion simulation should succeed");
 
     // Dose delivered over [5, 10], then exponential decay for 10 h:
     // (100 * (1 - exp(-0.5 * 5)) / (0.5 * 5)) * exp(-0.5 * 10).
@@ -590,9 +585,8 @@ fn dense_observations_a_few_ulps_from_event_time_do_not_error() {
         .expect("metadata should validate");
 
         let predictions = ode
-            .simulate(&subject, &crate::parameters::dense([]), None)
-            .unwrap_or_else(|error| panic!("{label}: dense grid near event failed: {error}"))
-            .0;
+            .predict(&subject, &crate::parameters::dense([]))
+            .unwrap_or_else(|error| panic!("{label}: dense grid near event failed: {error}"));
         assert_eq!(predictions.predictions().len(), 4);
     }
 }
@@ -666,9 +660,8 @@ fn run_hybrid_phage_infusions(subject: &Subject) -> Vec<f64> {
     .expect("metadata should validate");
 
     let predictions = ode
-        .simulate(subject, &crate::parameters::dense([]), None)
-        .expect("hybrid phage simulation should succeed")
-        .0;
+        .predict(subject, &crate::parameters::dense([]))
+        .expect("hybrid phage simulation should succeed");
 
     predictions
         .predictions()

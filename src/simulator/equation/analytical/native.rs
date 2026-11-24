@@ -138,6 +138,9 @@ impl AnalyticalModel for NativeAnalytical {
     }
 }
 
+// Low-level constructors that `analytical!` expands to. Build models with the
+// macro; these stay public only so its expansion can reach them.
+#[doc(hidden)]
 impl Analytical<NativeAnalytical> {
     /// Build an analytical model from handwritten functions.
     ///
@@ -185,10 +188,5 @@ impl Analytical<NativeAnalytical> {
         check_dimensions(&metadata, neqs.nstates, neqs.ndrugs, neqs.nout)?;
         self.model_mut().metadata = Some(metadata);
         Ok(self)
-    }
-
-    /// The attached metadata, if any.
-    pub fn metadata(&self) -> Option<&ValidatedModelMetadata> {
-        self.model.metadata.as_ref()
     }
 }

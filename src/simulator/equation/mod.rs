@@ -8,7 +8,7 @@
 //! - choose between deterministic ODE, analytical, and stochastic SDE models
 //! - attach metadata so dataset labels such as `"iv"` and `"cp"` resolve by
 //!   name instead of by dense numeric index
-//! - work with prediction or likelihood APIs across equation families
+//! - work with prediction APIs across equation families
 //!
 //! # Equation Families
 //!
@@ -71,23 +71,11 @@ pub use ode::*;
 pub use pharmsol_dsl::{AnalyticalKernel, ModelKind};
 pub use sde::*;
 
-use crate::{
-    error_model::{AssayErrorModels, ErrorModelError},
-    OutputLabel, PharmsolError, Subject,
-};
+use std::sync::Arc;
 
-use super::likelihood::Prediction;
+use crate::{PharmsolError, Subject};
 
-/// Prediction container returned by an [`Equation`].
-pub trait Predictions {
-    /// Get all predictions as a vector.
-    ///
-    /// Particle containers return the mean prediction across particles.
-    fn get_predictions(&self) -> Vec<Prediction>;
-
-    /// Calculate the log-likelihood of the predictions given an error model.
-    fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError>;
-}
+pub use super::predictions::PointPredictions;
 
 /// Trait for enabling prediction caching on equation types.
 ///
@@ -152,9 +140,10 @@ pub trait Cache: Sized {
 /// [`Parameters`](crate::Parameters) dereferences to a slice, so
 /// `&parameters` can be passed directly.
 pub trait Equation: Clone + Send + Sync + 'static {
-    /// Prediction container: [`SubjectPredictions`](crate::prelude::simulator::SubjectPredictions)
-    /// for deterministic models, a particle matrix for [`SDE`].
-    type P: Predictions;
+    /// Prediction container: [`SubjectPredictions`](crate::prelude::SubjectPredictions)
+    /// for deterministic models, [`ParticlePredictions`](crate::ParticlePredictions)
+    /// for [`SDE`].
+    type P: PointPredictions + Clone + Send + Sync;
 
     /// Validated metadata attached to this equation, if any.
     fn metadata(&self) -> Option<&ValidatedModelMetadata>;
@@ -167,68 +156,12 @@ pub trait Equation: Clone + Send + Sync + 'static {
 
     /// Simulate a subject and return its predictions.
     ///
-    /// Results may be served from the equation's cache.
-    fn predict(&self, subject: &Subject, parameters: &[f64]) -> Result<Self::P, PharmsolError>;
-
-    /// Log-likelihood of the subject's observations.
-    ///
-    /// Uses observation-based sigma, appropriate for non-parametric algorithms.
-    /// For parametric algorithms (SAEM, FOCE), use [`crate::ResidualErrorModels`]
-    /// directly.
-    fn log_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError>;
-
-    /// Simulate a subject and, when error models are given, also return the
-    /// likelihood (not log-likelihood) of its observations.
-    ///
-    /// The default scores the returned predictions, so it simulates once.
-    fn simulate(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-        error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        if let Some(error_models) = error_models {
-            self.validate_error_models(error_models)?;
-        }
-        let predictions = self.predict(subject, parameters)?;
-        let likelihood = match error_models {
-            Some(error_models) => Some(predictions.log_likelihood(error_models)?.exp()),
-            None => None,
-        };
-        Ok((predictions, likelihood))
-    }
-
-    /// Check that every label names one of this equation's outputs.
-    ///
-    /// Run once per call, before simulating, so an error model for an output
-    /// the equation does not declare fails up front instead of being ignored.
-    #[doc(hidden)]
-    fn validate_output_labels<'a>(
-        &self,
-        labels: impl IntoIterator<Item = &'a OutputLabel>,
-    ) -> Result<(), PharmsolError> {
-        for label in labels {
-            let declared = match self.metadata() {
-                Some(metadata) => metadata.output_for_label(label.as_str()).is_some(),
-                None => label.index().is_some_and(|slot| slot < self.nouteqs()),
-            };
-            if !declared {
-                return Err(ErrorModelError::UnknownOutputLabel(label.to_string()).into());
-            }
-        }
-        Ok(())
-    }
-
-    /// [`Self::validate_output_labels`] for an assay error-model set.
-    #[doc(hidden)]
-    fn validate_error_models(&self, error_models: &AssayErrorModels) -> Result<(), PharmsolError> {
-        self.validate_output_labels(error_models.labels())
-    }
+    /// [`ODE`] and [`Analytical`] hand out the cached predictions themselves
+    /// (no copy on a cache hit), or wrap a fresh result when caching is
+    /// disabled. An [`SDE`] returns free-running particles, uncached. Use
+    /// [`Arc::unwrap_or_clone`] for an owned copy.
+    fn predict(&self, subject: &Subject, parameters: &[f64])
+        -> Result<Arc<Self::P>, PharmsolError>;
 }
 
 /// Hash parameter vectors to a u64 for cache key generation.

@@ -24,7 +24,7 @@ use std::{fmt, sync::Arc};
 
 use quick_cache::sync::Cache;
 
-use crate::simulator::likelihood::SubjectPredictions;
+use crate::simulator::predictions::SubjectPredictions;
 
 /// Default maximum number of entries per cache.
 pub const DEFAULT_CACHE_SIZE: usize = 100_000;
@@ -33,7 +33,7 @@ pub const DEFAULT_CACHE_SIZE: usize = 100_000;
 pub(crate) type PredictionKey = (u64, u64);
 
 /// Cache key for SDE: (subject hash combined with seed and particle count,
-/// parameters hash, error-model hash)
+/// parameters hash, [`ObservationModel::cache_key`](crate::ObservationModel::cache_key))
 pub(crate) type SdeKey = (u64, u64, u64);
 
 /// Thread-safe bounded cache of simulation results.

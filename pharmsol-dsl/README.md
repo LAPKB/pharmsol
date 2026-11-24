@@ -184,3 +184,5 @@ a JSON-serializable report for editors and tooling.
 `pharmsol::dsl` re-exports that compiler surface and adds the runtime-facing APIs for backend selection, artifact loading, and prediction execution.
 
 Use `pharmsol-dsl` when you are building tooling, validation, migration, or your own backend. Use `pharmsol::dsl` when you want a complete source-to-runtime workflow.
+
+Neither crate computes likelihoods or defines error models. A compiled model produces predictions; scoring them against observations belongs to downstream crates such as PMcore. The one exception is a compiled SDE model: its particle filter (`log_likelihood` and `filter`) weights particles with an `ObservationModel` the caller supplies, a trait `pharmsol` defines but does not implement.

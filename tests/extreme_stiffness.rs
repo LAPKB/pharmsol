@@ -740,7 +740,7 @@ fn close_gap_bolus_model(solver: OdeSolver) -> equation::ODE {
 
 fn close_gap_failure(
     label: &str,
-    result: Result<SubjectPredictions, PharmsolError>,
+    result: Result<std::sync::Arc<SubjectPredictions>, PharmsolError>,
     start: f64,
     stop: f64,
     expected: f64,
