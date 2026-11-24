@@ -172,8 +172,10 @@ fn stiff_infusion_boundary_matches_analytical_explicit() {
 #[test]
 fn ulp_scale_gap_between_observations_recovers() {
     // Two observations 3e-14 apart at t = 0.1: too far apart for diffsol to
-    // report the second stop as already reached, close enough to crush the
-    // step size below recovery.
+    // report the second stop as already reached. With diffsol 0.18's
+    // `min_timestep` of 1e-13 this gap crushed the step size below recovery.
+    // Since diffsol 0.19 the minimum is f64::EPSILON, so the gap is above it
+    // and this now checks that close stops are resolved exactly.
     let close = 0.1_f64 + 3e-14;
     assert!(close > 0.1, "gap must be representable");
     let ke = 0.5;
@@ -194,8 +196,10 @@ fn ulp_scale_gap_between_observations_recovers() {
 
 #[test]
 fn ulp_scale_gap_between_observation_and_infusion_end_recovers() {
-    // The infusion ends 3e-14 after an observation, so the crushed step is
+    // The infusion ends 3e-14 after an observation, so the short step is
     // carried into an infusion-boundary restart instead of a plain segment.
+    // As above, the gap crushed the step with diffsol 0.18's 1e-13 minimum
+    // but is above diffsol 0.19's f64::EPSILON minimum.
     let duration = 0.1_f64 + 3e-14;
     let ke = 0.5;
     let times = [0.1, 2.0];

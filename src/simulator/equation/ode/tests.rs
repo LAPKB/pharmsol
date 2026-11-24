@@ -401,6 +401,63 @@ fn handwritten_ode_estimate_predictions_uses_prediction_cache() {
     assert_eq!(first_calls, second_calls);
 }
 
+fn decaying_route_function(
+    x: &V,
+    _p: &V,
+    _t: f64,
+    dx: &mut V,
+    b: &V,
+    rateiv: &V,
+    _cov: &Covariates,
+) {
+    dx[0] = b[0] + rateiv[0] - 0.5 * x[0];
+}
+
+#[test]
+fn with_max_steps_limits_accepted_steps_per_occasion() {
+    let decay = || {
+        ODE::new(
+            decaying_route_function,
+            zero_lag,
+            unit_fa,
+            zero_init,
+            state_output,
+        )
+        .with_nstates(1)
+        .with_ndrugs(1)
+        .with_nout(1)
+    };
+    let subject = Subject::builder("step_limit")
+        .bolus(0.0, 100.0, 0)
+        .observation(24.0, 0.0, 0)
+        .build();
+
+    for solver in [
+        OdeSolver::Bdf,
+        OdeSolver::Sdirk(SdirkTableau::TrBdf2),
+        OdeSolver::Sdirk(SdirkTableau::Esdirk34),
+        OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45),
+    ] {
+        decay()
+            .with_solver(solver.clone())
+            .predict(&subject, &crate::parameters::dense([]))
+            .unwrap_or_else(|error| panic!("{solver:?} with default limit: {error}"));
+
+        let error = decay()
+            .with_solver(solver.clone())
+            .with_max_steps(2)
+            .predict(&subject, &crate::parameters::dense([]))
+            .expect_err("two steps cannot reach t = 24");
+        let message = error.to_string();
+        assert!(
+            message.contains("limit of 2 solver steps")
+                || message.contains("cumulative count/limit = 2/2"),
+            "{solver:?}: {message}"
+        );
+        assert!(message.contains("with_max_steps"), "{solver:?}: {message}");
+    }
+}
+
 #[test]
 fn clones_with_other_solver_settings_do_not_share_cache_entries() {
     let ode = simple_ode();
@@ -601,9 +658,9 @@ fn dense_observations_a_few_ulps_from_event_time_do_not_error() {
 // parameters hardcoded. A large infusion rate (1e9 over 1.25e-3 h) makes
 // the first Newton solve after every infusion boundary fail once with
 // diffsol's convergence heuristics and then recover via step-size
-// reduction; over a long horizon those individually recovered failures
-// accumulate in diffsol's absolute `number_of_nonlinear_solver_fails`
-// counter and blow up the run unless the boundary restart avoids them.
+// reduction. Up to diffsol 0.18 those recovered failures accumulated in a
+// cumulative 50-failure limit over the whole run. Since diffsol 0.19 the
+// limit applies per step, so they no longer add up across boundaries.
 fn hybrid_phage_diffeq(x: &V, _p: &V, _t: f64, dx: &mut V, _b: &V, rateiv: &V, _cov: &Covariates) {
     let eps = 1.0e-12_f64;
     let soft = |v: f64| 0.5 * (v + (v * v + eps * eps).sqrt());
@@ -680,10 +737,14 @@ fn run_hybrid_phage_infusions(subject: &Subject) -> Vec<f64> {
 #[test]
 fn ode_infusions_long_horizon_boundary_failures_do_not_accumulate() {
     // Exact finite-f64 reproduction of debug/dat.csv subject `1`: 103
-    // short infusions and 42 observations (with duplicates). Without
-    // boundary restarts, individually recovered Newton failures accumulate
-    // past diffsol's 50-failure limit. `build()` orders events by time, so
-    // the two tables reproduce the interleaved source schedule exactly.
+    // short infusions and 42 observations (with duplicates). This was a
+    // regression test for Newton failures adding up past diffsol 0.18's
+    // cumulative 50-failure limit. diffsol 0.19 made that limit per step, so
+    // the test now checks that this long, stiff, event-dense occasion
+    // finishes, and that it fits in pharmsol's per-occasion step budget,
+    // which is above diffsol's default of 5000 steps. `build()` orders
+    // events by time, so the two tables reproduce the interleaved source
+    // schedule exactly.
     const INFUSION_DURATION: f64 = 0.00125;
     const INFUSIONS: [(f64, f64); 103] = [
         (0.0, 1e+09),

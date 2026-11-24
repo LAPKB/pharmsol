@@ -403,6 +403,22 @@ where
     shift_solver_coordinate::<F, S>(solver, absolute_time, target_time, dy_scratch)
 }
 
+/// Whether diffsol would treat `stop_time` as already reached from
+/// `state_time` with step `step`. This mirrors the roundoff test in diffsol's
+/// `handle_tstop` (BDF and Runge-Kutta): `|t - tstop| <= 100 ε (|t| + |h|)`.
+///
+/// Since diffsol 0.19, `set_stop_time` answers such a stop by snapping the
+/// state time onto it, which would relabel model time across the gap and skip
+/// any dynamics in it (for example a whole ULP-short infusion at a large
+/// time). The caller treats the stop as `StopTimeAtCurrentTime` instead,
+/// leaving the state untouched, so the gap is rebased and integrated. The
+/// rebase leaves local `t = 0` and `h <= gap`, so the rebased stop lies
+/// outside this tolerance.
+fn diffsol_would_snap_stop(state_time: f64, step: f64, stop_time: f64) -> bool {
+    let troundoff = 100.0 * f64::EPSILON * (state_time.abs() + step.abs());
+    (stop_time - state_time).abs() <= troundoff
+}
+
 fn ensure_no_material_infusion_is_skipped<'a, F, S>(
     solver: &S,
     start_time: f64,
@@ -488,6 +504,12 @@ where
                 OdeSolverError::StepSizeTooSmall { time } => OdeSolverError::StepSizeTooSmall {
                     time: solver.problem().eqn.absolute_time(time),
                 },
+                OdeSolverError::TooManyTimesteps { time, num_steps } => {
+                    OdeSolverError::TooManyTimesteps {
+                        time: solver.problem().eqn.absolute_time(time),
+                        num_steps,
+                    }
+                }
                 other => other,
             };
             DiffsolError::OdeSolverError(error)
@@ -777,7 +799,15 @@ where
                         "ODE event coordinate conversion is not finite: current local t = {state_time:?}, absolute stop = {absolute_stop_time:?}, local stop = {stop_time:?}, gap = {local_gap:?}"
                     )));
                 }
-                match solver.set_stop_time(stop_time) {
+                let set_stop_result =
+                    if diffsol_would_snap_stop(state_time, solver.state().h, stop_time) {
+                        Err(diffsol::error::DiffsolError::OdeSolverError(
+                            OdeSolverError::StopTimeAtCurrentTime,
+                        ))
+                    } else {
+                        solver.set_stop_time(stop_time)
+                    };
+                match set_stop_result {
                     Ok(()) => {
                         if *pending_reinit {
                             reinitialize_at_boundary(solver, dy_scratch);
@@ -1187,21 +1217,88 @@ mod tests {
 
     #[test]
     fn explicit_step_guard_is_selected_only_for_tsit45() {
-        assert_eq!(accepted_step_limits_for_solver(&OdeSolver::Bdf), None);
+        assert_eq!(accepted_step_limits_for_solver(&OdeSolver::Bdf, 7), None);
         assert_eq!(
-            accepted_step_limits_for_solver(&OdeSolver::Sdirk(SdirkTableau::TrBdf2)),
+            accepted_step_limits_for_solver(&OdeSolver::Sdirk(SdirkTableau::TrBdf2), 7),
             None
         );
         assert_eq!(
-            accepted_step_limits_for_solver(&OdeSolver::Sdirk(SdirkTableau::Esdirk34)),
+            accepted_step_limits_for_solver(&OdeSolver::Sdirk(SdirkTableau::Esdirk34), 7),
             None
         );
         assert_eq!(
-            accepted_step_limits_for_solver(&OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45)),
+            accepted_step_limits_for_solver(&OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45), 7),
             Some(ExplicitStepBudgetConfig {
                 max_accepted_steps_per_segment: 500_000,
-                max_accepted_steps_per_session: 10_000_000,
+                max_accepted_steps_per_session: 7,
             })
+        );
+    }
+
+    #[test]
+    fn diffsol_step_cap_is_finite_only_for_implicit_solvers() {
+        for solver in [
+            OdeSolver::Bdf,
+            OdeSolver::Sdirk(SdirkTableau::TrBdf2),
+            OdeSolver::Sdirk(SdirkTableau::Esdirk34),
+        ] {
+            assert_eq!(max_number_timesteps_for_solver(&solver, 7), 7);
+        }
+        assert_eq!(
+            max_number_timesteps_for_solver(&OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45), 7),
+            usize::MAX
+        );
+    }
+
+    #[test]
+    fn diffsol_step_cap_error_reports_absolute_time() {
+        let covariates = Covariates::default();
+        let mut problem = OdeBuilder::<M>::new()
+            .atol(vec![1e-4])
+            .rtol(1e-4)
+            .t0(0.0)
+            .h0(1e-3)
+            .p(Vec::<f64>::new())
+            .build_from_eqn(
+                PMProblem::with_params_v(
+                    unit_rhs as GuardTestRhs,
+                    1,
+                    0,
+                    V::zeros(0, NalgebraContext::new()),
+                    &covariates,
+                    &[],
+                    V::zeros(1, NalgebraContext::new()),
+                    100.0,
+                )
+                .expect("finite test ODE problem"),
+            )
+            .expect("test ODE builder should succeed");
+        problem.ode_options.max_number_timesteps =
+            max_number_timesteps_for_solver(&OdeSolver::Bdf, 3);
+        let mut solver = problem
+            .bdf::<NalgebraLU<f64>>()
+            .expect("test BDF solver should build");
+
+        let error = loop {
+            if let Err(error) = solver.step() {
+                break error;
+            }
+        };
+        assert!(matches!(
+            error,
+            diffsol::error::DiffsolError::OdeSolverError(OdeSolverError::TooManyTimesteps {
+                num_steps: 3,
+                ..
+            })
+        ));
+        let local_time = solver.state().t;
+        assert!(local_time > 0.0 && local_time < 1.0);
+
+        let message = solver_error_at_absolute_time(&solver, error, 150.0).to_string();
+        assert!(message.contains("limit of 3 solver steps"), "{message}");
+        assert!(
+            message.contains(&format!("at t = {:.4}", 100.0 + local_time)),
+            "{message}"
         );
     }
 
@@ -1415,7 +1512,7 @@ mod tests {
         let problem = guard_test_problem(1.0);
         problem
             .eqn
-            .configure_explicit_step_guard(accepted_step_limits_for_solver(&OdeSolver::Bdf));
+            .configure_explicit_step_guard(accepted_step_limits_for_solver(&OdeSolver::Bdf, 7));
         problem.eqn.begin_explicit_step_segment(0.0, 2.0);
         for time in 1..=4 {
             problem.eqn.record_explicit_accepted_step(f64::from(time));
